@@ -6,7 +6,10 @@
 아래에 붙는 그래프들이 전부 그 좌표를 받아 씁니다.
 """
 
+import glyphs
 import music
+
+#| 흐름  음 목록 → 악보 한 줄 SVG (가로 좌표를 여기서만 정한다)
 
 INK = "#e8e6e0"
 AXIS = "#5a5a56"
@@ -24,24 +27,46 @@ FLAT_POS = {"B": 4, "E": 7, "A": 3, "D": 6, "G": 2, "C": 5, "F": 1}
 
 def note_x(i: int, x0: float, step: float) -> float:
     """i번째 음의 가로 좌표. 아래 그래프들도 반드시 이 식을 씁니다."""
+    #| 흐름  음 번호 → 가로 좌표.  악보·낙하 노드·리포트 세 층이 모두 이 식을 쓴다
     return x0 + step * (i + 0.5)
 
 
 def staff_pos(letter: str, octave: int) -> int:
     """음이름 → 오선 위치 번호. 아래 첫 줄(E4)이 0, 반칸마다 +1."""
+    #| 흐름  음이름(A~G)과 옥타브 → 오선 몇 번째 칸인지
     return (music.LETTERS.index(letter) - 2) + 7 * (octave - 4)
 
 
-def layout(notes):
+def head_width(sig, left=14) -> float:
+    """자리표 + 조표가 차지하는 가로 폭.
+
+    음표는 이 뒤에서 시작해야 조표와 겹치지 않습니다.
+    """
+    #| 흐름  자리표 폭 + 조표 개수만큼의 폭을 더한다
+    mark, keys = sig
+    gl = glyphs.SHARP if mark == "♯" else glyphs.FLAT
+    gh = GAP * (2.7 if mark == "♯" else 2.4)
+    w = left + 2 + glyphs.width_of(glyphs.CLEF_G, GAP * 6.7) + GAP * 0.55
+    w += len(keys) * (glyphs.width_of(gl, gh) + GAP * 0.2)
+    return w + GAP
+
+
+def layout(notes, with_badges=True):
     """이 악보를 그리는 데 위아래로 얼마나 필요한지 미리 잽니다.
 
     G현처럼 낮은 음은 덧줄이 아래로 많이 내려가서
     자리를 미리 잡아 두지 않으면 잘립니다.
+    판정 배지가 없는 화면(연습 가이드)은 위 여백이 덜 필요합니다.
     """
+    #| 흐름  이 악보를 그리는 데 위아래로 얼마나 필요한지 미리 잰다
+    #| 입력  음 목록 · 판정 배지를 다는지
+    #| 단계  가장 높은 음과 가장 낮은 음의 오선 위치를 찾는다
+    #| 갈래  배지를 다나 ? 위를 더 비운다 : 활·슬러 자리만 비운다
+    #| 출력  (위 여백, 아래 여백)
     ps = [staff_pos(n["letter"], n["octave"]) for n in notes]
     hi, lo = max(ps), min(ps)
-    top = 30 + max(0, (hi - 8)) * (GAP / 2) + 50      # 배지·활·슬러 자리
-    bottom = 26 + max(0, (0 - lo)) * (GAP / 2) + 30   # 계이름·포지션 띠 자리
+    top = (58 if with_badges else 40) + max(0, (hi - 8)) * (GAP / 2)
+    bottom = 26 + max(0, (0 - lo)) * (GAP / 2) + 30
     return top, bottom
 
 
@@ -51,32 +76,41 @@ def sy(pos: float, top: float) -> float:
 
 
 def _clef(top, left):
-    """높은음자리표 — 나선 중심이 G4(아래에서 둘째 줄)에 오게."""
-    ccx, ccy = left + GAP * 1.7, sy(2, top)
-
-    def U(dx, dy):
-        return f"{ccx + dx * GAP:.2f} {ccy + dy * GAP:.2f}"
-
-    return (f'<path d="M {U(0,0)} C {U(-0.45,-0.35)} {U(-1.05,0.15)} {U(-1.05,0.78)} '
-            f'C {U(-1.05,1.48)} {U(-0.32,1.90)} {U(0.34,1.62)} '
-            f'C {U(1.10,1.30)} {U(1.34,0.32)} {U(1.05,-0.58)} '
-            f'C {U(0.80,-1.48)} {U(0.05,-2.12)} {U(-0.30,-2.88)} '
-            f'C {U(-0.62,-3.55)} {U(0.28,-4.00)} {U(0.64,-3.32)} '
-            f'C {U(0.98,-2.72)} {U(0.55,-2.02)} {U(0.20,-1.52)} '
-            f'C {U(-0.28,-0.78)} {U(0.30,1.30)} {U(0.42,2.32)} '
-            f'C {U(0.54,3.20)} {U(-0.16,3.66)} {U(-0.64,3.24)} '
-            f'C {U(-0.98,2.94)} {U(-0.86,2.46)} {U(-0.50,2.42)}" '
-            f'fill="none" stroke="{INK}" stroke-width="{GAP*0.19:.2f}" '
-            f'stroke-linecap="round" stroke-linejoin="round"/>')
+    """높은음자리표. 나선 중심이 G4(아래에서 둘째 줄)에 오게 놓습니다."""
+    #| 흐름  글리프의 기준선을 G4 줄에 맞춰 놓는다
+    #| 단계  자리표 높이는 오선 6.7칸 — 위로 1칸, 아래로 1.7칸쯤 나옵니다
+    h = GAP * 6.7
+    return glyphs.place(glyphs.CLEF_G, left + 2, sy(2, top), h, INK,
+                        anchor="baseline")
 
 
 def line(notes, x0, step, top, right, *, sig=("♯", []), left=14,
-         badges=None, click=None, show_name=True, show_position=True):
+         badges=None, click=None, show_name=True, show_position=True,
+         show_finger=True, compact=False, mark_ids=False):
     """악보 한 줄을 SVG 조각 리스트로 만듭니다.
 
     badges : i → (색, 글자).  결과 리포트에서 음마다 판정을 붙일 때.
     click  : JS 함수 이름.  주면 음표를 눌러 그 부분만 다시 들을 수 있게.
     """
+    #| 흐름  음 목록 → 오선·조표·음표·슬러·활·마디선·포지션 띠 SVG 조각들
+    #| 입력  음 목록 · 가로 배치 · 조표 · (판정 배지 · 클릭 함수)
+    #| 단계  오선 다섯 줄을 긋고 높은음자리표를 그린다
+    #| 단계  조표(♯/♭)를 정해진 오선 자리에 놓는다
+    #| 단계  가장 높은 음표 위로 슬러·활·배지 높이를 통일해 잡는다
+    #| 반복  슬러 그룹마다
+        #| 갈래     두 음 이상인가 ? 잇는 곡선을 그린다 : 안 그린다
+        #| 단계     활 기호는 그룹 하나에 하나만 (한 활이니까)
+    #| 반복  음마다
+        #| 호출     note_x → 가로 좌표
+        #| 갈래     오선을 벗어났나 ? 덧줄을 위/아래로 긋는다 : 넘어간다
+        #| 갈래     임시표가 있나 ? 음표 왼쪽에 붙인다 : 넘어간다
+        #| 단계     머리와 기둥을 그린다 (가운데 줄보다 높으면 기둥은 아래로)
+        #| 갈래     판정 배지가 있나 ? 음표 위에 동그라미를 놓는다 : 넘어간다
+        #| 단계     아래에 계이름과 손가락 번호를 쓴다
+        #| 갈래     클릭을 받나 ? 투명한 누름 영역을 덮는다 : 넘어간다
+    #| 단계  마디선을 긋는다
+    #| 단계  포지션이 같은 구간끼리 묶어 띠를 그리고, 바뀌는 자리에 '손 이동' 점선
+    #| 출력  (SVG 조각 목록, 아래쪽 끝 y좌표)
     p = []
     n = len(notes)
     poss = [staff_pos(nt["letter"], nt["octave"]) for nt in notes]
@@ -91,11 +125,13 @@ def line(notes, x0, step, top, right, *, sig=("♯", []), left=14,
     # ── 조표 ──
     mark, keys = sig
     table = SHARP_POS if mark == "♯" else FLAT_POS
-    kx = left + GAP * 3.5
+    gl = glyphs.SHARP if mark == "♯" else glyphs.FLAT
+    gh = GAP * (2.7 if mark == "♯" else 2.4)
+    # 자리표가 끝나는 자리부터 조표를 놓습니다
+    kx = left + 2 + glyphs.width_of(glyphs.CLEF_G, GAP * 6.7) + GAP * 0.55
     for k in keys:
-        p.append(f'<text x="{kx:.1f}" y="{sy(table[k], top)+5:.1f}" '
-                 f'text-anchor="middle" font-size="{GAP*1.7:.1f}" fill="{INK}">{mark}</text>')
-        kx += GAP * 0.95
+        p.append(glyphs.place(gl, kx, sy(table[k], top), gh, INK))
+        kx += glyphs.width_of(gl, gh) + GAP * 0.2
 
     # 활·슬러·배지가 놓이는 높이 — 가장 높은 음표보다 위로 통일합니다
     hi_y = min(sy(pp, top) for pp in poss)
@@ -126,7 +162,7 @@ def line(notes, x0, step, top, right, *, sig=("♯", []), left=14,
                      f'stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>')
 
     # ── 음표 ──
-    name_y = top + GAP * 4 + max(0, -min(poss)) * (GAP / 2) + 20
+    name_y = top + GAP * 4 + max(0, -min(poss)) * (GAP / 2) + (12 if compact else 20)
     for i, nt in enumerate(notes):
         x = note_x(i, x0, step)
         pos = poss[i]
@@ -141,16 +177,21 @@ def line(notes, x0, step, top, right, *, sig=("♯", []), left=14,
                      f'y2="{sy(lp,top):.1f}" stroke="{INK}" stroke-width="1.4"/>')
 
         if nt["acc"]:
-            p.append(f'<text x="{x-13:.1f}" y="{y+5:.1f}" text-anchor="middle" '
-                     f'font-size="{GAP*1.6:.1f}" fill="{INK}">{nt["acc"]}</text>')
+            gl = {"♯": glyphs.SHARP, "♭": glyphs.FLAT, "♮": glyphs.NATURAL}[nt["acc"]]
+            gh = GAP * (2.5 if nt["acc"] == "♭" else 2.7)
+            # 음표 머리 왼쪽에 붙입니다 (오른쪽 끝이 머리에서 3px 떨어지게)
+            p.append(glyphs.place(gl, x - 9 - glyphs.width_of(gl, gh), y, gh, INK))
 
-        p.append(f'<ellipse cx="{x:.1f}" cy="{y:.1f}" rx="6.2" ry="4.6" '
+        # mark_ids 를 주면 id 가 붙어, 연주 중에 JS 가 그 음만 색을 바꿉니다
+        hid = f' id="nh{i}"' if mark_ids else ''
+        sid = f' id="ns{i}"' if mark_ids else ''
+        p.append(f'<ellipse{hid} cx="{x:.1f}" cy="{y:.1f}" rx="6.2" ry="4.6" '
                  f'transform="rotate(-20 {x:.1f} {y:.1f})" fill="{INK}"/>')
         if pos >= 4:                       # 가운데 줄보다 높으면 기둥은 아래로
-            p.append(f'<line x1="{x-5.6:.1f}" y1="{y+1:.1f}" x2="{x-5.6:.1f}" '
+            p.append(f'<line{sid} x1="{x-5.6:.1f}" y1="{y+1:.1f}" x2="{x-5.6:.1f}" '
                      f'y2="{y+28:.1f}" stroke="{INK}" stroke-width="1.6"/>')
         else:
-            p.append(f'<line x1="{x+5.6:.1f}" y1="{y-1:.1f}" x2="{x+5.6:.1f}" '
+            p.append(f'<line{sid} x1="{x+5.6:.1f}" y1="{y-1:.1f}" x2="{x+5.6:.1f}" '
                      f'y2="{y-28:.1f}" stroke="{INK}" stroke-width="1.6"/>')
 
         if badges:
@@ -161,8 +202,10 @@ def line(notes, x0, step, top, right, *, sig=("♯", []), left=14,
                          f'font-size="10.5" font-weight="700" fill="#fff">{txt}</text>')
 
         if show_name:
-            p.append(f'<text x="{x:.1f}" y="{name_y:.1f}" text-anchor="middle" '
-                     f'font-size="12" fill="{MUT}">{nt["ko"]}</text>')
+            nid = f' id="nk{i}"' if mark_ids else ''
+            p.append(f'<text{nid} x="{x:.1f}" y="{name_y:.1f}" text-anchor="middle" '
+                     f'font-size="12" font-weight="400" fill="{MUT}">{nt["ko"]}</text>')
+        if show_finger:
             p.append(f'<text x="{x:.1f}" y="{name_y+14:.1f}" text-anchor="middle" '
                      f'font-size="10.5" fill="{POS_COLOR[nt["position"]]}">'
                      f'{"개방" if nt["finger"] == 0 else str(nt["finger"]) + "번"}</text>')
@@ -182,7 +225,7 @@ def line(notes, x0, step, top, right, *, sig=("♯", []), left=14,
                  f'stroke="{INK if last else AXIS}" stroke-width="{2.4 if last else 1}"/>')
 
     # ── 포지션 띠 — 어디서 손을 옮기는지 ──
-    pos_y = name_y + 30
+    pos_y = name_y + (14 if compact else 30)
     if show_position:
         runs, cur = [], 0
         for i in range(1, n + 1):
@@ -205,4 +248,29 @@ def line(notes, x0, step, top, right, *, sig=("♯", []), left=14,
             p.append(f'<text x="{xs:.1f}" y="{pos_y-11}" text-anchor="middle" '
                      f'font-size="9.5" fill="#c3c2b7">손 이동</text>')
 
-    return p, pos_y + 22
+    # 포지션 띠를 안 그리면 그만큼 아래가 짧아집니다
+    if not show_position:
+        return p, name_y + (8 if compact else 14)
+    return p, pos_y + (14 if compact else 22)
+
+
+def preview(notes, sig, width: int = 900, show_position: bool = True) -> str:
+    """악보 한 줄을 그대로 보여주는 SVG 한 덩어리.
+
+    「내 악보」 화면에서 **적은 대로 나오는지 눈으로 확인**하는 데 씁니다.
+    적은 글이 틀렸는지는 글자로는 모르고, 악보로 봐야 압니다.
+    """
+    #| 흐름  음 목록 → 그대로 붙여 쓸 수 있는 SVG 문자열
+    #| 입력  음 목록 · 조표 · 폭
+    #| 갈래  음이 하나도 없나 ? 빈 문자열 : 그린다
+    #| 호출  layout → 위 여백,  line → 악보 조각
+    #| 출력  <svg> … </svg>
+    if not notes:
+        return ""
+    x0 = max(70, head_width(sig))
+    step = (width - x0 - 24) / len(notes)
+    top = layout(notes, with_badges=False)[0]
+    parts, bottom = line(notes, x0, step, top, right=width - 16, sig=sig,
+                         show_position=show_position, compact=True)
+    return (f'<svg viewBox="0 0 {width} {bottom}" width="100%" '
+            f'height="{bottom}" style="display:block">{"".join(parts)}</svg>')

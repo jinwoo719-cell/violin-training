@@ -1,716 +1,739 @@
 """
-화면 두 개.
+화면 ① — 움직이는 가이드.
 
-  화면 ①  guide()   움직이는 가이드 — 악보 + 지판으로 떨어지는 노드
-  화면 ②  report()  결과 리포트 — 악보 위에 음정·박자·궤적을 겹쳐 보기
+  악보 → 낙하 노드 → 판정선 → 지판, 하나의 세로 흐름.
+  오른쪽에 「다음 음 안내」 — 몇 번 손가락인지 손 그림으로.
 
-둘 다 악보의 가로 좌표를 staff.note_x() 에서 가져옵니다.
-따로 계산하면 반드시 어긋납니다.
+**가로로 든 휴대폰**을 기준으로 짰습니다.
+논리 크기 880 x 330 으로 그린 뒤, 화면 폭에 맞춰 통째로 줄입니다.
+가로 844px 짜리 폰에서 스크롤 없이 한 화면에 들어갑니다.
+
+결과 리포트는 report.py 에 있습니다.
+둘 다 악보의 가로 좌표를 staff.note_x() 에서 가져옵니다 — 따로 계산하면 어긋납니다.
 """
 
-import base64
 import json
 
+import instrument
 import music
 import staff
+from theme import C          # 색은 theme.py 한곳에서
 
-C = {
-    "bg": "#0d0d0c", "panel": "#1a1a19", "ink": "#ffffff", "ink2": "#c3c2b7",
-    "muted": "#8a8a86", "grid": "#2c2c2a", "axis": "#3a3a37", "line": "#2e2e2b",
-    "sharp": "#3987e5",    # 높게
-    "flat": "#e66767",     # 낮게
-    "good": "#0ca30c",     # 허용 범위 안
-    "trace": "#f0d98c",    # 내 음정
-}
+#| 흐름  음 목록 → 화면 ①(가이드) HTML
 
-# 지판 가로 배치 — 파이썬과 JS가 같은 식을 써야 잇는 선이 맞습니다
-BOARD_X0 = 78.0
-BOARD_PAD = 130.0
+# ── 논리 크기 (가로 폰 기준) ──
+W = 880             # 전체 폭
+H = 320             # 전체 높이 (가로 폰 한 화면)
+PANEL_W = 232       # 오른쪽 「다음 음 안내」 폭
+GAPX = 12
+LW = W - PANEL_W - GAPX       # 왼쪽(악보+캔버스) 폭
+BAR_H = 24          # 맨 아래 설명 줄
+LANE_H = 78         # 노드가 떨어지는 구간
+LEAD = 1.35         # 몇 초 앞의 음까지 보여줄지
+ROW_GAP = 18        # 지판에서 줄 사이 간격 (계이름이 들어갈 자리까지)
 
-# 줄 색 — 굵은 줄일수록 어둡게
 STRING_COLOR = {"E": "#f6e9b8", "A": "#f0d98c", "D": "#cbb06a", "G": "#a98c4e"}
 
 
-def board_x(mm: float, width: int) -> float:
-    return BOARD_X0 + (width - BOARD_PAD) * (mm / music.VIEW_MM)
+def guide_height(notes=None, sig=None) -> int:
+    """components.html 에 넘길 높이. 논리 높이 그대로입니다."""
+    #| 흐름  논리 높이에 여백만 조금 더한다
+    return H + 8
 
 
-def _txt(x, y, s, size=11, fill=None, anchor="middle", weight=400, mono=False):
-    fam = ("ui-monospace,Menlo,monospace" if mono
-           else "system-ui,-apple-system,'Malgun Gothic',sans-serif")
-    return (f'<text x="{x:.1f}" y="{y:.1f}" text-anchor="{anchor}" font-size="{size}" '
-            f'font-weight="{weight}" font-family="{fam}" '
-            f'fill="{fill or C["ink"]}">{s}</text>')
-
-
-# ══════════════════════════════════════════════════════════════
-#  화면 ① — 움직이는 가이드
-# ══════════════════════════════════════════════════════════════
-LANE_H = 232          # 노드가 떨어지는 구간 높이
-BOARD_H = 142         # 판정선 아래 지판 구간 높이
-CANVAS_H = LANE_H + BOARD_H
-
-
-def _score_bottom(notes, width):
-    top = staff.layout(notes)[0]
-    _, bottom = staff.line(notes, 78, (width - 46 - 78) / len(notes), top,
-                           right=width, sig=("♯", []))
-    return bottom
-
-
-def guide_height(notes, width: int = 900) -> int:
-    """components.html 에 넘길 전체 높이"""
-    return int(_score_bottom(notes, width) + CANVAS_H + 46)
-
-
-def guide(notes, sig, bpm: int, width: int = 900) -> str:
-    """악보 → 낙하 노드 → 판정선 → 지판, 하나의 세로 흐름.
-
-    **악보의 음표 x와 낙하 노드 x를 똑같이 둡니다.**
-    악보에서 음표를 짚어 아래로 눈을 내리면 그 노드가 바로 거기 있어야
-    "무엇을 / 언제"가 한 번에 읽힙니다.
-
-    그럼 '지판 어디를 짚나'는? 판정선 **아래**에서 답합니다.
-    노드가 닿는 순간 지판의 실제 mm 자리로 선이 이어지고 손가락이 찍힙니다.
-    (지판의 가로는 거리라서 악보의 가로와 같을 수가 없습니다)
-    """
-    x0, x1 = 78, width - 46
-    step = (x1 - x0) / len(notes)
-    top = staff.layout(notes)[0]
-
-    parts, bottom = staff.line(notes, x0, step, top, right=x0 + step * len(notes) + 10,
-                               sig=sig)
-
-    # 음표 아래로 내려가는 옅은 세로선 — 캔버스의 레인과 이어집니다
+def _score(notes, sig, x0, step):
+    """가이드용 악보 — 배지·손가락줄 없이 얇게."""
+    #| 흐름  악보를 얇게 그리고, 음표 아래로 세로선을 내려 캔버스 레인과 잇는다
+    #| 입력  음 목록 · 조표 · 가로 배치
+    #| 호출  staff.layout → 위 여백 (배지가 없으니 덜 필요)
+    #| 호출  staff.line → 악보 조각 (계이름만, 포지션 띠는 얇게)
+    #| 반복  음마다
+    #| 단계     음표 아래로 옅은 세로선 — 아래 레인과 이어집니다
+    #| 단계  지금 어디인지 알려주는 커서를 얹는다
+    #| 출력  (SVG, 높이)
+    top = staff.layout(notes, with_badges=False)[0]
+    parts, bottom = staff.line(notes, x0, step, top,
+                               right=x0 + step * len(notes) + 8,
+                               sig=sig, show_finger=False, show_position=False,
+                               compact=True, mark_ids=True)
     for i in range(len(notes)):
         sx = staff.note_x(i, x0, step)
-        parts.append(f'<line x1="{sx:.1f}" y1="{top + staff.GAP*4 + 6:.1f}" '
+        parts.append(f'<line x1="{sx:.1f}" y1="{top + staff.GAP*4 + 5:.1f}" '
                      f'x2="{sx:.1f}" y2="{bottom:.1f}" stroke="#ffffff" '
-                     f'stroke-width="1" opacity="0.09"/>')
+                     f'stroke-width="1" opacity="0.08"/>')
+    parts.append(f'<rect id="cursor" x="{x0:.1f}" y="{top-9}" width="{step:.1f}" '
+                 f'height="{staff.GAP*4+18}" fill="#ffffff" fill-opacity="0.13" '
+                 f'stroke="#ffffff" stroke-opacity="0.5" stroke-width="1.4" rx="6"/>')
+    return (f'<svg id="score" viewBox="0 0 {LW} {bottom}" width="{LW}" '
+            f'height="{bottom}" style="display:block">{"".join(parts)}</svg>'), bottom
 
-    parts.append(f'<rect id="cursor" x="{x0:.1f}" y="{top-8}" width="{step:.1f}" '
-                 f'height="{staff.GAP*4+16}" fill="{C["trace"]}" opacity="0.16" rx="4"/>')
 
-    score = (f'<svg id="score" viewBox="0 0 {width} {bottom}" width="{width}" '
-             f'height="{bottom}" style="display:block">{"".join(parts)}</svg>')
+def guide(notes, sig, bpm: int, inst: str = "violin", ready: int = 5) -> str:
+    """악보 → 낙하 노드 → 판정선 → 지판, 하나의 세로 흐름."""
+    #| 흐름  악보 · 낙하 노드 · 지판 · 다음 음 안내를 한 화면에
+    #| 입력  음 목록 · 조표 · BPM · 악기 · 준비 시간
+    #| 호출  instrument.get → 줄·길이·좌우 그림
+    #| 호출  _score → 악보 SVG (낙하 레인과 같은 x)
+    #| 호출  instrument.hand_svg → 손 그림 (손끝 표시를 미리 다 만들어 둠)
+    #| 단계  음 정보를 JS 에 넘긴다 (자리·손가락·활·색·시각)
+    #| 단계  화면 폭에 맞춰 통째로 줄이는 코드를 붙인다 (가로 폰 대응)
+    #| 출력  HTML  (JS 가 매 프레임 다시 그림)
+    ins = instrument.get(inst)
+    x0 = max(70, staff.head_width(sig))
+    x1 = LW - 22
+    step = (x1 - x0) / len(notes)
 
+    score_svg, score_h = _score(notes, sig, x0, step)
+    cv_h = H - score_h - BAR_H
+    # 내 악보는 줄을 넘나들 수 있습니다 — 쓰는 줄을 모두 밝게 합니다
+    used = [s for s in ins["strings"] if any(n["string"] == s for n in notes)]
     active = notes[0]["string"]
+    used_label = " · ".join(
+        f'<b style="color:{STRING_COLOR[s]}">{s}현</b>' for s in used)
+
     data = [{"i": i, "ko": n["ko"], "finger": n["finger"], "bow": n["bow"],
              "mm": n["mm"], "t": n["t"], "dur": n["dur"], "pos": n["position"],
+             "str": n["string"], "f": n["freq"],
              "color": staff.DOWN_COLOR if n["bow"] == "down" else staff.UP_COLOR,
              "slurHead": n["slur_head"]}
             for i, n in enumerate(notes)]
-    strings = [{"name": s["name"], "color": STRING_COLOR[s["name"]],
-                "w": 1.5 + 0.45 * i} for i, s in enumerate(music.STRINGS)]
+    strings = [{"name": s, "color": STRING_COLOR[s], "w": 1.4 + 0.4 * i}
+               for i, s in enumerate(ins["strings"])]
+    # 다른 줄에도 1포지션 손가락 자리를 흐리게 — 지판 전체가 보이게
     marks = {s["name"]: [music.mm_from_freq(s["freq"] * 2 ** (k / 12), s["freq"])
                          for k in (2, 4, 5, 7)] for s in music.STRINGS}
+    art = {"scroll": ins["scroll"], "body": ins["body"], "pegs": ins["pegs"],
+           "wood": ins["wood"], "board": ins["board"], "bridge_x": ins["bridge_x"],
+           "scroll_img": ins.get("scroll_img", ""),
+           "scroll_nut": ins.get("scroll_nut", 1.0),
+           "scroll_aspect": ins.get("scroll_aspect", 1.0),
+           "scroll_str": list(ins.get("scroll_str", (0.0, 1.0))),
+           "body_img": ins.get("body_img", ""),
+           "body_aspect": ins.get("body_aspect", 1.0),
+           "body_str": list(ins.get("body_str", (0.0, 1.0)))}
 
-    return f"""<!DOCTYPE html><html><head><meta charset="utf-8"><style>
- html,body{{margin:0;padding:0;background:{C['bg']}}}
- #wrap{{width:{width}px;margin:0 auto;
+    return f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<style>
+ html,body{{margin:0;padding:0;background:{C['bg']};overflow:hidden;
+   -webkit-text-size-adjust:100%}}
+ #fit{{width:100%;overflow:hidden}}
+ #wrap{{width:{W}px;transform-origin:top left;
    font-family:system-ui,-apple-system,'Malgun Gothic',sans-serif}}
- canvas{{display:block;border-radius:0 0 14px 14px}}
- #bar{{display:flex;gap:10px;align-items:center;padding:9px 4px 0;
-   color:{C['ink2']};font-size:12.5px;flex-wrap:wrap}}
- button{{background:#262624;color:#fff;border:1px solid {C['axis']};
-   border-radius:8px;padding:6px 13px;font-size:12.5px;cursor:pointer;
-   font-family:inherit}}
- button:hover{{background:#333330}}
- .k{{display:inline-flex;align-items:center;gap:5px;margin-left:10px}}
- .sw{{width:11px;height:11px;border-radius:3px;display:inline-block}}
- .dim{{color:{C['muted']};font-size:11.5px}}
-</style></head><body><div id="wrap">
- <div style="background:{C['bg']};border-radius:14px 14px 0 0">{score}</div>
- <canvas id="cv" width="{width}" height="{CANVAS_H}"></canvas>
+ #row{{display:flex;gap:{GAPX}px}}
+ #left{{width:{LW}px;flex:none}}
+ canvas{{display:block;border-radius:0 0 12px 12px}}
+ #panel{{width:{PANEL_W}px;flex:none;background:{C['panel']};
+   border:1px solid {C['line']};border-radius:12px;padding:11px 13px;
+   height:{cv_h}px;box-sizing:border-box;display:flex;flex-direction:column}}
+ .pt{{font-size:11.5px;color:{C['muted']};margin-bottom:6px}}
+ .pbody{{display:flex;gap:8px;align-items:center;flex:1}}
+ .pinfo{{flex:1;min-width:0}}
+ .pko{{font-size:27px;font-weight:700;color:{C['ink']};line-height:1.15}}
+ .pfg{{font-size:12.5px;color:{C['ink2']};margin-bottom:8px}}
+ .pbow{{display:inline-block;font-size:12px;font-weight:600;border-radius:6px;
+   padding:3px 8px;margin-bottom:7px}}
+ .ppos{{font-size:11.5px;font-weight:600;margin-top:4px}}
+ #bar{{display:flex;gap:9px;align-items:center;height:{BAR_H}px;
+   color:{C['ink2']};font-size:11.5px}}
+ button{{background:{C['panel2']};color:{C['ink']};border:1px solid {C['line']};
+   border-radius:7px;padding:4px 11px;font-size:11.5px;cursor:pointer;
+   font-family:inherit;touch-action:manipulation}}
+ .k{{display:inline-flex;align-items:center;gap:4px;margin-left:8px}}
+ .sw{{width:9px;height:9px;border-radius:2px;display:inline-block}}
+ /* 노드 속도 — 연주하면서 바로 만질 수 있게 바 안에 둡니다 */
+ #spbox{{gap:6px}}
+ #sp{{width:88px;height:18px;accent-color:{C['accent']};cursor:pointer;
+   touch-action:manipulation}}
+ #spv{{font-family:ui-monospace,Menlo,monospace;font-size:11px;
+   color:{C['ink']};min-width:34px}}
+ /* 폰에서 손가락으로 잡기 쉽게 */
+ #sp::-webkit-slider-thumb{{width:16px;height:16px}}
+ select{{background:{C['panel2']};color:{C['ink']};border:1px solid {C['line']};
+   border-radius:6px;padding:3px 5px;font-size:11.5px;font-family:inherit;
+   cursor:pointer}}
+ #rot{{position:fixed;inset:0;background:{C['bg']};color:{C['ink2']};
+   display:none;align-items:center;justify-content:center;font-size:15px;
+   text-align:center;line-height:2;z-index:9}}
+</style></head><body>
+<div id="fit"><div id="wrap">
+ <div id="row">
+  <div id="left">
+   {score_svg}
+   <canvas id="cv" width="{LW}" height="{cv_h}"></canvas>
+  </div>
+  <div id="panel">
+   <div class="pt">다음 음 안내</div>
+   <div class="pbody">
+    <div class="pinfo">
+      <div class="pko" id="pko">—</div>
+      <div class="pfg" id="pfg">&nbsp;</div>
+      <div class="pbow" id="pbow">&nbsp;</div>
+      <div class="ppos" id="ppos">&nbsp;</div>
+    </div>
+    <div style="flex:none">{instrument.hand_html(ins, 100)}</div>
+   </div>
+  </div>
+ </div>
  <div id="bar">
    <button id="go">▶ 처음부터</button>
-   <span>{bpm} BPM · <b style="color:{STRING_COLOR[active]}">{active}현</b></span>
-   <span class="k"><i class="sw" style="background:{staff.DOWN_COLOR}"></i>⊓ 다운보우</span>
-   <span class="k"><i class="sw" style="background:{staff.UP_COLOR}"></i>∨ 업보우</span>
-   <span class="dim" style="margin-left:auto">
-     악보 = 무엇을 · 노드 = 언제 · 판정선 = 지금 · 지판 = 어디를</span>
+   <button id="dm" title="악보를 소리로 먼저 들려줍니다 (녹음 전에)">🔊 시범 듣기</button>
+   <span class="k">준비
+     <select id="rd">
+       <option value="0">없음</option><option value="3">3초</option>
+       <option value="5">5초</option><option value="7">7초</option>
+       <option value="10">10초</option><option value="15">15초</option>
+     </select></span>
+   <span>{bpm} BPM · {used_label}</span>
+   <span class="k"><i class="sw" style="background:{staff.DOWN_COLOR}"></i>⊓ 다운</span>
+   <span class="k"><i class="sw" style="background:{staff.UP_COLOR}"></i>∨ 업</span>
+   <span class="k" id="spbox" style="margin-left:auto">노드 속도
+     <input id="sp" type="range" min="0.5" max="3" step="0.1" value="1">
+     <b id="spv">1.0배</b></span>
  </div>
-</div>
+</div></div>
+<div id="rot"><div>📱 가로로 돌려서 보세요<br>
+<span style="font-size:12.5px;opacity:.7">악보와 지판을 한 화면에 놓으려면
+가로가 필요합니다</span></div></div>
 <script>
 const NOTES = {json.dumps(data, ensure_ascii=False)};
 const STRINGS = {json.dumps(strings, ensure_ascii=False)};
 const MARKS = {json.dumps(marks)};
-const ACTIVE = "{active}";
-const VIEW_MM = {music.VIEW_MM}, W = {width}, H = {CANVAS_H};
+const ART = {json.dumps(art, ensure_ascii=False)};
+const ACTIVE = "{active}", USED = {json.dumps(used)}, VIEW_MM = {ins["view_mm"]};
+const LW = {LW}, CV = {cv_h};
 const X0 = {x0}, STEP = {step}, BEAT = {60.0 / bpm};
 const TOTAL = {len(notes) * 60.0 / bpm};
-const HIT_Y = {LANE_H};                       // 판정선
-const BOARD_TOP = HIT_Y + 16, BOARD_BOT = H - 22;
+const HIT_Y = {LANE_H};                     // 판정선
+const BOARD_TOP = HIT_Y + 8, BOARD_BOT = CV - 14;
+const ROW_GAP = {ROW_GAP};
+const SCROLL_W = {ins["scroll_w"]}, BODY_W = {ins["body_w"]};
+const BX0 = SCROLL_W, BX1 = LW - BODY_W;    // 지판의 왼쪽·오른쪽 끝
+const LEAD_BASE = {LEAD};                   // 1.0배일 때 몇 초 앞까지 보이나
 const ROW = {{}};
-STRINGS.forEach((s, i) => ROW[s.name] = BOARD_TOP + 18 + i * 22);
-const LEAD = {LANE_H} / 116, PPS = 116;       // 초당 내려오는 픽셀
+STRINGS.forEach((s, i) => ROW[s.name] = BOARD_TOP + 11 + i * ROW_GAP);
 
 const cv = document.getElementById('cv'), g = cv.getContext('2d');
+const scrollImg = new Image();
+scrollImg.src = ART.scroll_img || '';
+const bodyImg = new Image();
+bodyImg.src = ART.body_img || '';
 const cursor = document.getElementById('cursor');
+const wrap = document.getElementById('wrap'), fitbox = document.getElementById('fit');
+const P = {{ko: pko, fg: pfg, bow: pbow, pos: ppos}};
 
-// 낙하 레인의 x = 악보 음표의 x.  둘은 **같은 식**을 씁니다.
+// 낙하 레인의 x = 악보 음표의 x.  둘은 같은 식을 씁니다.
 const laneX = i => X0 + STEP * (i + 0.5);
-// 지판의 x = 너트에서의 실제 거리. 파이썬 board_x() 와 같은 식.
-const boardX = mm => {BOARD_X0} + (W - {BOARD_PAD}) * (mm / VIEW_MM);
+// 지판의 x = 너트에서의 실제 거리
+const boardX = mm => BX0 + (BX1 - BX0) * (mm / VIEW_MM);
 
-let t0 = performance.now();
-document.getElementById('go').onclick = () => {{ t0 = performance.now(); }};
+// ── 화면 폭에 맞춰 통째로 줄이기 (가로 폰 대응) ──
+function fit() {{
+  const w = document.documentElement.clientWidth;
+  document.getElementById('rot').style.display = (w < 540) ? 'flex' : 'none';
+  const s = Math.max(0.5, Math.min(1, w / {W}));
+  wrap.style.transform = `scale(${{s}})`;
+  wrap.style.marginLeft = Math.max(0, (w - {W} * s) / 2) + 'px';
+  fitbox.style.height = ({H} * s) + 'px';
+}}
+addEventListener('resize', fit); fit();
+
+// ══════════════════════════════════════════════════════════════
+//  시작 전 — 준비 시간 → 메트로놈 카운트인 → 연주  (노래방처럼)
+// ══════════════════════════════════════════════════════════════
+// 시각 t 는 **첫 음이 울리는 순간이 0** 입니다. 그 앞은 음수입니다.
+//     t < -4박          준비 (자세 잡기) — 남은 초를 크게
+//     -4박 ≤ t < 0      메트로놈 똑 · 똑 · 똑 · 똑
+//     t ≥ 0             연주
+// 하나의 시간축이라 노드·악보·소리가 저절로 맞습니다.
+//| 흐름  준비 시간 → 4박 카운트인 → 연주.  셋이 한 시간축입니다.
+const COUNT = 4;                            // 카운트인 박 수
+let READY = {ready};                        // 준비 시간 (초)
+const rdIn = document.getElementById('rd');
+try {{
+  const v = parseFloat(localStorage.getItem('vc_ready'));
+  if (v >= 0) READY = v;
+}} catch (e) {{}}
+rdIn.value = READY;
+if (rdIn.selectedIndex < 0) rdIn.value = 5;  // 저장된 값이 목록에 없으면
+
+let t0 = 0, clicked = -1, played = -1;
+function start(ready) {{
+  //| 흐름  지금부터 (준비 + 카운트인) 뒤에 첫 음이 오도록 시각을 맞춘다
+  t0 = performance.now() + (ready + COUNT * BEAT) * 1000;
+  clicked = -1;                              // 메트로놈을 처음부터 다시
+  played = -1;                               // 시범 연주도 처음부터
+  marked = -2; shown = -2;
+}}
+
+// ── 메트로놈 — 짧은 클릭. 첫 박만 높게 (어디가 1박인지 알게) ──
+let ac = null;
+function audio() {{
+  //| 갈래  소리 장치가 있나 ? 그대로 : 하나 만든다 (막혀 있으면 깨운다)
+  try {{
+    if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+    if (ac.state === 'suspended') ac.resume();
+  }} catch (e) {{ ac = null; }}
+  return ac;
+}}
+function tick(accent) {{
+  const a = audio();
+  if (!a || a.state !== 'running') return;
+  const o = a.createOscillator(), gn = a.createGain(), t1 = a.currentTime;
+  o.type = 'square';
+  o.frequency.value = accent ? 1760 : 1175;
+  gn.gain.setValueAtTime(0.0001, t1);
+  gn.gain.exponentialRampToValueAtTime(accent ? 0.42 : 0.26, t1 + 0.004);
+  gn.gain.exponentialRampToValueAtTime(0.0001, t1 + 0.07);
+  o.connect(gn); gn.connect(a.destination);
+  o.start(t1); o.stop(t1 + 0.09);
+}}
+// 브라우저는 손가락이 닿기 전에는 소리를 내주지 않습니다 — 첫 접촉 때 깨웁니다
+addEventListener('pointerdown', () => audio(), {{once: true}});
+
+// ── 시범 연주 — 악보를 소리로 먼저 들려줍니다 ──
+// 톱니파를 저역통과로 깎으면 활 소리 비슷해집니다 (배음이 많고 위가 부드러움).
+// 완벽한 악기 소리가 목적이 아니라, **음정과 박자를 귀로 확인**하는 것이 목적입니다.
+//| 흐름  음 하나를 그 높이·길이만큼 소리 낸다
+let DEMO = false;
+const dmBtn = document.getElementById('dm');
+function setDemo(v) {{
+  DEMO = v;
+  dmBtn.style.background = v ? '{C['accent']}' : '{C['panel2']}';
+  dmBtn.style.color = v ? '#fff' : '{C['ink']}';
+  dmBtn.textContent = v ? '🔊 시범 켜짐' : '🔊 시범 듣기';
+}}
+dmBtn.onclick = () => {{ audio(); setDemo(!DEMO); start(READY); }};
+
+function tone(n) {{
+  const a = audio();
+  if (!a || a.state !== 'running') return;
+  const t1 = a.currentTime, d = Math.max(0.14, n.dur * 0.95);
+  const o = a.createOscillator(), lp = a.createBiquadFilter(), gn = a.createGain();
+  o.type = 'sawtooth'; o.frequency.value = n.f;
+  lp.type = 'lowpass'; lp.frequency.value = Math.min(7000, n.f * 6); lp.Q.value = 0.7;
+  gn.gain.setValueAtTime(0.0001, t1);
+  gn.gain.exponentialRampToValueAtTime(0.20, t1 + 0.055);   // 활이 걸리는 시간
+  gn.gain.exponentialRampToValueAtTime(0.13, t1 + d * 0.72);
+  gn.gain.exponentialRampToValueAtTime(0.0001, t1 + d);
+  o.connect(lp); lp.connect(gn); gn.connect(a.destination);
+  o.start(t1); o.stop(t1 + d + 0.03);
+}}
+
+document.getElementById('go').onclick = () => {{ audio(); start(READY); }};
+rdIn.onchange = () => {{
+  READY = +rdIn.value;
+  try {{ localStorage.setItem('vc_ready', READY); }} catch (e) {{}}
+  audio(); start(READY);
+}};
+
+// ── 준비·카운트인 표시 ──
+// 지판 왼쪽(스크롤 위쪽)은 노드가 지나가지 않는 자리라 여기에 그립니다.
+function countIn(t) {{
+  //| 갈래  아직 준비 시간인가 ? 남은 초를 크게 : 메트로놈 네 박을 점으로
+  g.save(); g.textAlign = 'center';
+  if (t < -COUNT * BEAT) {{
+    const s = Math.ceil(-t - COUNT * BEAT);
+    g.fillStyle = '{C['ink']}'; g.font = '700 34px system-ui';
+    g.fillText(s, LW / 2, 38);
+    g.fillStyle = '{C['muted']}'; g.font = '12.5px system-ui';
+    g.fillText('자세를 잡으세요 · 곧 메트로놈이 울립니다', LW / 2, 60);
+  }} else {{
+    const b = Math.floor((t + COUNT * BEAT) / BEAT);        // 지금 몇 박째
+    const frac = ((t + COUNT * BEAT) % BEAT) / BEAT;
+    const gap = 26, x0c = BX0 / 2 - gap * (COUNT - 1) / 2, cy = HIT_Y / 2 - 6;
+    //| 반복  네 박마다 점 하나 — 지난 박은 켜고, 지금 박은 크게
+    for (let k = 0; k < COUNT; k++) {{
+      const on = k === b;
+      g.beginPath();
+      g.arc(x0c + gap * k, cy, on ? 11 - 4 * frac : 6, 0, 6.284);
+      g.fillStyle = k < b ? 'rgba(255,255,255,0.45)'
+                  : (on ? (k === 0 ? '#ff2d45' : '{C['ink']}')
+                        : 'rgba(255,255,255,0.16)');
+      g.fill();
+    }}
+    // 선생님이 세어 주듯 — 마지막 박에 「시작!」
+    const say = ['하나', '둘', '셋', '넷 — 시작!'];
+    g.fillStyle = b === COUNT - 1 ? '#ff2d45' : '{C['ink2']}';
+    g.font = '700 12.5px system-ui';
+    g.fillText(say[b] || '', BX0 / 2, cy + 30);
+  }}
+  g.restore();
+}}
+
+// ── 노드 속도 — 빠를수록 앞이 덜 보이고 노드가 빨리 내려옵니다 ──
+// (BPM 은 '음악의 빠르기', 이건 '몇 초 앞까지 보여줄지'라 서로 다릅니다)
+let SPEED = 1;
+try {{ SPEED = parseFloat(localStorage.getItem('vc_speed')) || 1; }} catch (e) {{}}
+const spIn = document.getElementById('sp'), spV = document.getElementById('spv');
+function setSpeed(v) {{
+  SPEED = Math.max(0.5, Math.min(3, v));
+  spIn.value = SPEED; spV.textContent = SPEED.toFixed(1) + '배';
+  // 배속이 뭘 바꾸는지 — 몇 초 앞까지 보이는지
+  spIn.title = '앞이 보이는 시간 ' + (LEAD_BASE / SPEED).toFixed(2) + '초';
+  try {{ localStorage.setItem('vc_speed', SPEED); }} catch (e) {{}}
+}}
+spIn.oninput = () => setSpeed(+spIn.value);
+setSpeed(SPEED);
+setDemo(false);
+
+// ── 악기 그림 — 0~1 좌표를 상자에 맞춰 그립니다 ──
+function art(list, x, w, y, h) {{
+  g.save(); g.beginPath(); g.rect(x - 3, y - 16, w + 6, h + 32); g.clip();
+  for (const it of list) {{
+    const p = new Path2D();
+    p.addPath(new Path2D(it.d), {{a: w, b: 0, c: 0, d: h, e: x, f: y}});
+    if (it.grad) {{
+      const gr = g.createLinearGradient(0, y, 0, y + h);
+      gr.addColorStop(0, it.grad[0]); gr.addColorStop(1, it.grad[1]);
+      g.fillStyle = gr; g.fill(p);
+    }} else if (it.fill) {{ g.fillStyle = ART.wood[it.fill]; g.fill(p); }}
+    else {{ g.strokeStyle = ART.wood[it.stroke]; g.lineWidth = it.w * h;
+            g.lineCap = 'round'; g.lineJoin = 'round'; g.stroke(p); }}
+  }}
+  g.restore();
+}}
+
+// 사진 하나를 **줄 간격에 맞춰** 놓습니다.
+// 사진 속 E현·G현 자리를 지판의 E·G 줄에 맞추면 크기가 저절로 정해지고,
+// 사진의 줄과 화면의 줄이 한 줄로 이어져 보입니다.
+//| 흐름  사진 속 두 줄 자리를 지판의 두 줄에 맞춰 크기와 위치를 정한다
+function photo(img, str, aspect, anchorX, atFrac) {{
+  const r0 = ROW[STRINGS[0].name], r3 = ROW[STRINGS[3].name];
+  const ih = (r3 - r0) / (str[1] - str[0]);      // 줄 간격이 맞는 높이
+  const iw = ih / aspect;
+  g.drawImage(img, anchorX - iw * atFrac, r0 - str[0] * ih, iw, ih);
+}}
+
+function board() {{
+  const top = BOARD_TOP, bot = BOARD_BOT, h = bot - top;
+
+  // 오른쪽 — 몸통. 사진이 있으면 사진, 없으면 그림.
+  //| 갈래  몸통 사진이 있나 ? 지판 끝에 이어 붙인다 : 코드로 그린다
+  if (bodyImg.complete && bodyImg.naturalWidth) {{
+    // 몸통은 지판보다 훨씬 넓어서, 줄 간격을 맞추면 위아래가 화면 밖으로 나갑니다.
+    // 잘린 자리가 네모나게 보이지 않도록 위아래를 바탕색으로 흐리게 덮습니다.
+    const y0 = HIT_Y + 2, y1 = CV - 1;         // 판정선 아래 ~ 캔버스 끝
+    g.save();
+    g.beginPath(); g.rect(BX1 - 1, y0, LW - BX1 + 1, y1 - y0); g.clip();
+    photo(bodyImg, ART.body_str, ART.body_aspect, BX1, 0);
+    //| 반복  위·아래 잘린 자리마다 — 바탕색으로 서서히 사라지게
+    for (const [ya, yb, hh] of [[y0, y0 + 12, 12], [y1, y1 - 20, 20]]) {{
+      const fg = g.createLinearGradient(0, ya, 0, yb);
+      fg.addColorStop(0, '{C['bg']}'); fg.addColorStop(1, 'rgba(13,17,23,0)');
+      g.fillStyle = fg;
+      g.fillRect(BX1 - 1, Math.min(ya, yb), LW - BX1 + 1, hh);
+    }}
+    g.restore();
+  }} else {{
+    art(ART.body, BX1, BODY_W, top, h);
+  }}
+
+  // 왼쪽 — 스크롤·페그박스는 사진.
+  // 사진 속 줄 간격을 지판의 줄 간격에 맞춰 크기를 정하고,
+  // 너트가 지판 시작점(BX0)에 오도록 놓습니다. 그래야 줄이 이어져 보입니다.
+  if (scrollImg.complete && scrollImg.naturalWidth) {{
+    photo(scrollImg, ART.scroll_str, ART.scroll_aspect, BX0, ART.scroll_nut);
+  }} else {{
+    art(ART.scroll, 0, SCROLL_W, top, h);      // 사진이 없으면 그림으로
+    for (const pg of ART.pegs) {{
+      const x = pg[0] * SCROLL_W, y = top + pg[1] * h;
+      g.strokeStyle = ART.wood.dark; g.lineWidth = 2.2;
+      g.beginPath(); g.moveTo(x, top + 0.5 * h); g.lineTo(x, y); g.stroke();
+      g.fillStyle = ART.wood.sheen;
+      g.beginPath(); g.ellipse(x, y, 2.8, 4.6, 0, 0, 6.284); g.fill();
+    }}
+  }}
+
+  // 지판 (흑단)
+  g.beginPath();
+  g.moveTo(BX0 - 2, top + 4); g.lineTo(BX1 + 2, top);
+  g.lineTo(BX1 + 2, bot); g.lineTo(BX0 - 2, bot - 4); g.closePath();
+  const gr = g.createLinearGradient(0, top, 0, bot);
+  gr.addColorStop(0, ART.board.top); gr.addColorStop(1, ART.board.bot);
+  g.fillStyle = gr; g.fill();
+  g.fillStyle = '#d8cfbd'; g.fillRect(BX0 - 4.5, top + 3, 3.6, h - 5);   // 너트
+
+  // 네 줄 — 연주하는 줄만 밝게, 나머지는 자리 참고용
+  // 몸통이 사진이면 사진 안에 이미 줄이 있으므로, 내 줄은 지판 끝에서 멈춥니다.
+  const photoBody = bodyImg.complete && bodyImg.naturalWidth;
+  const bx = photoBody ? BX1 + 5 : BX1 + BODY_W * ART.bridge_x;
+  STRINGS.forEach(s => {{
+    const y = ROW[s.name], on = USED.indexOf(s.name) >= 0;
+    g.globalAlpha = on ? 1 : 0.26;
+    g.strokeStyle = s.color; g.lineWidth = on ? s.w + 1.2 : s.w;
+    g.beginPath(); g.moveTo(BX0 - 6, y); g.lineTo(bx, y); g.stroke();
+    MARKS[s.name].forEach(mm => {{
+      g.fillStyle = s.color; g.globalAlpha = on ? 0.4 : 0.12;
+      g.beginPath(); g.arc(boardX(mm), y, on ? 2.4 : 1.8, 0, 6.284); g.fill();
+    }});
+    // 줄 이름(E·A·D·G)은 **너트 왼쪽**에 둡니다.
+    // 지판 위에 두면 계이름이 들어갈 자리를 뺏습니다.
+    g.globalAlpha = 1;
+    g.fillStyle = on ? s.color : '#8a8a86';
+    g.font = (on ? '700 ' : '') + '9.5px system-ui'; g.textAlign = 'right';
+    g.strokeStyle = 'rgba(0,0,0,0.85)'; g.lineWidth = 2.6;
+    g.strokeText(s.name, BX0 - 7, y + 3.4);    // 사진 위라 테두리를 넣어 읽히게
+    g.fillText(s.name, BX0 - 7, y + 3.4);
+  }});
+  g.globalAlpha = 1;
+
+  // 브리지 — 사진에는 이미 있으므로 그림일 때만
+  //| 갈래  몸통이 사진인가 ? 사진의 브리지를 쓴다 : 브리지를 그린다
+  if (!photoBody) {{
+    const bgd = g.createLinearGradient(bx - 6, 0, bx + 6, 0);
+    bgd.addColorStop(0, ART.wood.edge); bgd.addColorStop(1, ART.wood.mid);
+    g.fillStyle = bgd;
+    g.beginPath();
+    g.moveTo(bx - 3, top + 4); g.lineTo(bx + 3, top + 4);
+    g.lineTo(bx + 5, bot - 4); g.lineTo(bx - 5, bot - 4); g.closePath(); g.fill();
+  }}
+
+  // 이번 연습에 쓰는 음의 자리 — 세로 안내선은 지판 전체에
+  g.textAlign = 'center';
+  SPOTS.forEach(sp => {{
+    const x = boardX(sp.mm);
+    g.strokeStyle = 'rgba(255,255,255,0.09)'; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(x, top + 2); g.lineTo(x, bot - 2); g.stroke();
+  }});
+
+  // 계이름은 **그 음이 쓰는 줄 바로 아래**에, 그 줄 색으로.
+  // 아래에 한 줄로 몰아 적으면 줄이 여럿일 때 어느 줄 이름인지 알 수 없습니다.
+  // (같은 손가락 자리라도 줄이 다르면 다른 음입니다)
+  //| 반복  계이름 라벨마다 — 자기 줄 아래에
+  g.textAlign = 'center';
+  LABELS.forEach(L => {{
+    g.font = '700 8.5px system-ui';
+    g.strokeStyle = 'rgba(0,0,0,0.9)'; g.lineWidth = 2.8;
+    g.strokeText(L.ko, L.x, ROW[L.s] + 9);
+    g.fillStyle = SCOL[L.s] || '#9a9a94';
+    g.globalAlpha = USED.indexOf(L.s) >= 0 ? 0.95 : 0.4;
+    g.fillText(L.ko, L.x, ROW[L.s] + 9);
+    g.globalAlpha = 1;
+  }});
+
+  // 판정선 — 여기 닿는 순간 짚습니다. 나무색 위에서도 튀도록 원색으로.
+  g.save();
+  const hg = g.createLinearGradient(0, HIT_Y - 16, 0, HIT_Y);
+  hg.addColorStop(0, 'rgba(255,45,69,0)'); hg.addColorStop(1, 'rgba(255,45,69,0.18)');
+  g.fillStyle = hg; g.fillRect(BX0 + 1, HIT_Y - 16, LW, 16);
+  g.shadowColor = '#ff2d45'; g.shadowBlur = 9;
+  g.strokeStyle = '#ff2d45'; g.lineWidth = 2.2;
+  g.beginPath(); g.moveTo(BX0 + 1, HIT_Y); g.lineTo(LW, HIT_Y); g.stroke();
+  g.restore();
+}}
+
+// 노드는 처음부터 끝까지 **지판 자리**에서 곧게 떨어집니다.
+// 악보 자리에서 흘러내리게도 해 봤는데, 어디에 앉을지 예측이 안 돼 헷갈렸습니다.
+// 대신 "지금 어느 음인지"는 위 악보에서 그 음표를 켜서 알려줍니다.
+const NODE_W = 30, NODE_R = 7;      // 판정 자리(리셉터)와 같은 폭·모서리
 
 function lanes() {{
-  // 악보에서 내려온 세로선이 그대로 이어집니다
+  // 아래 절반은 지판 자리 그대로 — 노드가 여기로 내려앉습니다
   NOTES.forEach(n => {{
-    const x = laneX(n.i);
-    g.strokeStyle = 'rgba(255,255,255,0.07)'; g.lineWidth = 1;
+    const x = boardX(n.mm);
+    const grd = g.createLinearGradient(0, 0, 0, HIT_Y);
+    grd.addColorStop(0, 'rgba(255,255,255,0)');
+    grd.addColorStop(0.55, 'rgba(255,255,255,0.05)');
+    grd.addColorStop(1, 'rgba(255,255,255,0.11)');
+    g.strokeStyle = grd; g.lineWidth = 1;
     g.beginPath(); g.moveTo(x, 0); g.lineTo(x, HIT_Y); g.stroke();
   }});
 }}
 
-function board() {{
-  g.beginPath();
-  g.moveTo(56, BOARD_TOP + 6); g.lineTo(W - 18, BOARD_TOP);
-  g.lineTo(W - 18, BOARD_BOT); g.lineTo(56, BOARD_BOT - 6); g.closePath();
-  const gr = g.createLinearGradient(0, BOARD_TOP, 0, BOARD_BOT);
-  gr.addColorStop(0, '#3a2f28'); gr.addColorStop(1, '#241c17');
-  g.fillStyle = gr; g.fill();
-  g.fillStyle = '#e8e2d6'; g.fillRect(48, BOARD_TOP + 2, 8, BOARD_BOT - BOARD_TOP - 3);
-
-  STRINGS.forEach(s => {{
-    const y = ROW[s.name], on = s.name === ACTIVE;
-    g.globalAlpha = on ? 1 : 0.28;
-    g.strokeStyle = s.color; g.lineWidth = on ? s.w + 1.3 : s.w;
-    g.beginPath(); g.moveTo(56, y); g.lineTo(W - 18, y); g.stroke();
-    MARKS[s.name].forEach(mm => {{
-      g.fillStyle = s.color; g.globalAlpha = on ? 0.45 : 0.14;
-      g.beginPath(); g.arc(boardX(mm), y, on ? 2.8 : 2.1, 0, 6.284); g.fill();
-    }});
-    g.globalAlpha = 1;
-    g.fillStyle = on ? s.color : '#6b6b67';
-    g.font = (on ? '700 ' : '') + '11px system-ui'; g.textAlign = 'right';
-    g.fillText(s.name, 42, y + 4);
-  }});
-  g.globalAlpha = 1;
-
-  // 이번 연습에 쓰는 음의 지판 자리
-  g.textAlign = 'center';
+// ── 판정 자리(리셉터) — 리듬게임의 그 자리. 여기에 맞추면 됩니다 ──
+// 줄이 달라도 손가락 자리가 같으면 x 가 겹칩니다 (실제로 같은 자리니까요).
+// 겹친 것을 여러 번 그리면 꺼진 것이 켜진 것을 덮으므로, 자리별로 묶어 한 번만 그립니다.
+const SPOTS = (() => {{
+  const m = new Map();
   NOTES.forEach(n => {{
-    const x = boardX(n.mm);
-    g.strokeStyle = 'rgba(255,255,255,0.09)'; g.lineWidth = 1;
-    g.beginPath(); g.moveTo(x, BOARD_TOP + 4); g.lineTo(x, BOARD_BOT - 4); g.stroke();
-    g.fillStyle = '#7c7c78'; g.font = '10.5px system-ui';
-    g.fillText(n.ko, x, BOARD_BOT + 15);
+    const k = Math.round(n.mm * 2);
+    if (!m.has(k)) m.set(k, {{mm: n.mm, list: []}});
+    m.get(k).list.push(n);
   }});
+  return [...m.values()];
+}})();
 
-  // 판정선 — 악보보다 앞서면 안 되므로 얇고 차분하게
-  g.strokeStyle = 'rgba(227,73,72,0.55)'; g.lineWidth = 1.4;
-  g.beginPath(); g.moveTo(40, HIT_Y); g.lineTo(W - 18, HIT_Y); g.stroke();
-  g.fillStyle = 'rgba(227,73,72,0.65)'; g.font = '10px system-ui';
-  g.textAlign = 'left'; g.fillText('지금', 14, HIT_Y + 4);
+// ── 계이름 라벨 — 줄마다 하나씩, 너무 붙으면 앞의 것만 ──
+const SCOL = {{}};
+STRINGS.forEach(s => SCOL[s.name] = s.color);
+const LABELS = (() => {{
+  const by = {{}}, out = [];
+  NOTES.forEach(n => (by[n.str] = by[n.str] || []).push(n));
+  for (const s in by) {{
+    let lastX = -999;
+    //| 반복  그 줄의 음을 지판 순서로
+    //| 갈래     앞 이름과 너무 붙나 ? 건너뛴다 : 라벨 하나를 놓는다
+    for (const n of by[s].slice().sort((a, b) => a.mm - b.mm)) {{
+      const x = Math.max(boardX(n.mm), BX0 + 10);   // 개방현은 줄 이름과 안 겹치게
+      if (x - lastX < 16) continue;
+      lastX = x;
+      out.push({{x: x, s: s, ko: n.ko}});
+    }}
+  }}
+  return out;
+}})();
+
+function receptors(t) {{
+  SPOTS.forEach(sp => {{
+    const x = boardX(sp.mm);
+    const n = sp.list.find(v => t >= v.t - 0.09 && t <= v.t + v.dur) || sp.list[0];
+    const live = (t >= n.t - 0.09 && t <= n.t + n.dur);
+    g.save();
+    if (live) {{ g.shadowColor = n.color; g.shadowBlur = 14; }}
+    g.strokeStyle = live ? n.color : 'rgba(255,255,255,0.30)';
+    g.fillStyle = live ? n.color + '33' : 'rgba(255,255,255,0.05)';
+    g.lineWidth = live ? 2.2 : 1.2;
+    g.beginPath(); g.roundRect(x - NODE_W/2, HIT_Y - 8, NODE_W, 16, NODE_R);
+    g.fill(); g.stroke();
+    g.restore();
+  }});
+}}
+
+// ── 악보에서 지금 음표 켜기 ──
+// 노드는 지판 자리로 떨어지므로, "악보의 어느 음인지"는 여기서 알려줍니다.
+const INK = '#e8e6e0';
+function markScore(i) {{
+  if (i === marked) return;
+  for (const j of [marked, i]) {{
+    if (j < 0 || j >= NOTES.length) continue;
+    const on = (j === i), col = on ? NOTES[j].color : INK;
+    const h = document.getElementById('nh' + j),
+          st = document.getElementById('ns' + j),
+          kn = document.getElementById('nk' + j);
+    if (h) h.setAttribute('fill', col);
+    if (st) st.setAttribute('stroke', col);
+    if (kn) {{      // 계이름도 같이 — 어느 음인지 글자로도 보이게
+      kn.setAttribute('fill', on ? col : '{staff.MUT}');
+      kn.setAttribute('font-weight', on ? 700 : 400);
+      kn.setAttribute('font-size', on ? 13.5 : 12);
+    }}
+  }}
+  if (i >= 0) {{
+    cursor.setAttribute('fill', NOTES[i].color);
+    cursor.setAttribute('fill-opacity', 0.16);
+    cursor.setAttribute('stroke', NOTES[i].color);
+    cursor.setAttribute('stroke-opacity', 0.8);
+  }}
+  marked = i;
+}}
+
+// ── 다음 음 안내 — 바뀔 때만 고칩니다 (매 프레임 고치면 느립니다) ──
+let shown = -2, marked = -2;
+function panel(i) {{
+  if (i === shown) return;
+  shown = i;
+  // 손끝 배지 — 짚는 손가락만 빨갛게, 나머지는 어둡게
+  for (const k of [1, 2, 3, 4]) {{
+    const e = document.getElementById('ft' + k);
+    if (e) e.querySelector('circle').setAttribute('fill', '#2f3644');
+  }}
+  const open0 = document.getElementById('ft0');
+  if (open0) open0.style.display = 'none';
+  if (i < 0) return;
+  const n = NOTES[i];
+  P.ko.textContent = n.ko;
+  //| 갈래  줄을 넘나드는 악보인가 ? 어느 줄인지도 같이 : 손가락만
+  P.fg.textContent = (n.finger === 0 ? '개방현' : n.finger + '번 손가락')
+                   + (USED.length > 1 ? ' · ' + n.str + '현' : '');
+  P.bow.textContent = (n.bow === 'down' ? '⊓ 다운보우' : '∨ 업보우');
+  P.bow.style.color = n.color;
+  P.bow.style.background = n.color + '22';
+  P.pos.textContent = n.pos + '포지션';
+  P.pos.style.color = n.pos === 1 ? '#22c55e' : '#f59e0b';
+  //| 갈래  개방현인가 ? '개방' 표시를 켠다 : 그 손끝 배지를 빨갛게
+  if (n.finger === 0) {{
+    if (open0) open0.style.display = '';
+  }} else {{
+    const ft = document.getElementById('ft' + n.finger);
+    if (ft) ft.querySelector('circle').setAttribute('fill', '#ef4444');
+  }}
 }}
 
 function draw() {{
   let t = (performance.now() - t0) / 1000;
-  if (t > TOTAL + 1.0) {{ t0 = performance.now(); t = 0; }}
-  g.fillStyle = '{C['bg']}'; g.fillRect(0, 0, W, H);
+  //| 갈래  끝까지 갔나 ? 다시 처음부터 (두 번째부터는 준비 없이 카운트인만) : 계속
+  if (t > TOTAL + 0.9) {{ start(0); t = (performance.now() - t0) / 1000; }}
+  g.fillStyle = '{C['bg']}'; g.fillRect(0, 0, LW, CV);
   lanes();
+  const PPS = HIT_Y * SPEED / LEAD_BASE;      // 배속만큼 빨리 내려옵니다
+
+  //| 갈래  카운트인 구간인가 ? 박이 넘어갈 때마다 똑 소리 : 넘어간다
+  if (t < 0 && t >= -COUNT * BEAT) {{
+    const b = Math.floor((t + COUNT * BEAT) / BEAT);
+    if (b > clicked) {{ clicked = b; tick(b === 0); }}
+  }}
+  //| 갈래  시범 연주가 켜져 있나 ? 차례가 된 음을 소리 낸다 : 넘어간다
+  if (DEMO && t >= 0) {{
+    while (played + 1 < NOTES.length && t >= NOTES[played + 1].t - 0.02) {{
+      played++; tone(NOTES[played]);
+    }}
+  }}
 
   const idx = Math.max(0, Math.min(NOTES.length - 1, Math.floor(t / BEAT)));
   cursor.setAttribute('x', (X0 + STEP * idx).toFixed(1));
+  markScore(idx);
+  panel(idx);
 
-  // ── 떨어지는 노드 — 악보 음표 바로 아래 레인에서 ──
+  // 떨어지는 노드 — 지판 자리에서 곧게. 판정 자리와 같은 폭·모서리입니다.
   NOTES.forEach(n => {{
     const yB = HIT_Y - (n.t - t) * PPS;
-    const h = Math.max(n.dur * PPS - 6, 10), yT = yB - h;
-    if (yB < -16 || yT > HIT_Y + 8) return;
-    const x = laneX(n.i), w = Math.min(34, STEP - 10);
+    const h = Math.max(n.dur * PPS - 5, 10), yT = yB - h;
+    if (yB < -14 || yT > HIT_Y + 8) return;
+    const x = boardX(n.mm);
     const live = yB >= HIT_Y - 4 && yT <= HIT_Y + 4;
 
-    g.save(); g.beginPath(); g.rect(0, 0, W, HIT_Y); g.clip();
-    if (live) {{ g.shadowColor = n.color; g.shadowBlur = 20; }}
-    g.fillStyle = n.color; g.globalAlpha = live ? 1 : 0.88;
-    g.beginPath(); g.roundRect(x - w/2, yT, w, h, 7); g.fill();
+    g.save(); g.beginPath(); g.rect(0, 0, LW, HIT_Y); g.clip();
+    if (live) {{ g.shadowColor = n.color; g.shadowBlur = 16; }}
+    g.fillStyle = n.color; g.globalAlpha = live ? 1 : 0.86;
+    g.beginPath(); g.roundRect(x - NODE_W/2, yT, NODE_W, h, NODE_R); g.fill();
     g.restore();
     g.globalAlpha = 1; g.shadowBlur = 0;
 
-    if (h > 34) {{
-      if (n.slurHead) {{        // 슬러로 묶인 음은 첫 음에만 (한 활이니까)
-        g.strokeStyle = 'rgba(255,255,255,0.92)'; g.lineWidth = 2;
-        const by = yT + 12; g.beginPath();
+    if (h > 26) {{
+      if (n.slurHead) {{      // 슬러로 묶인 음은 첫 음에만 (한 활이니까)
+        g.strokeStyle = 'rgba(255,255,255,0.92)'; g.lineWidth = 1.8;
+        const by = yT + 11; g.beginPath();
         if (n.bow === 'down') {{
-          g.moveTo(x-6, by+6); g.lineTo(x-6, by); g.lineTo(x+6, by); g.lineTo(x+6, by+6);
+          g.moveTo(x-5, by+5); g.lineTo(x-5, by); g.lineTo(x+5, by); g.lineTo(x+5, by+5);
         }} else {{
-          g.moveTo(x-6, by); g.lineTo(x, by+7); g.lineTo(x+6, by);
+          g.moveTo(x-5, by); g.lineTo(x, by+6); g.lineTo(x+5, by);
         }}
         g.stroke();
       }}
-      g.fillStyle = '#fff'; g.font = '700 16px system-ui'; g.textAlign = 'center';
-      g.fillText(n.finger === 0 ? '○' : n.finger, x, yT + h/2 + 7);
+      g.fillStyle = '#fff'; g.font = '700 14px system-ui'; g.textAlign = 'center';
+      const yc = yT + h / 2 + (USED.length > 1 ? 2 : 6);
+      g.fillText(n.finger === 0 ? '○' : n.finger, x, yc);
+      //| 갈래  줄을 넘나드는 악보인가 ? 어느 줄인지 작게 덧붙인다 : 손가락만
+      if (USED.length > 1) {{
+        g.font = '700 9px system-ui'; g.globalAlpha = 0.85;
+        g.fillText(n.str, x, yc + 11); g.globalAlpha = 1;
+      }}
     }}
   }});
 
   board();
+  receptors(t);
 
-  // ── 판정선에 닿은 음 → 지판의 실제 자리로 이어 줍니다 ──
-  const y = ROW[ACTIVE];
+  // 판정선에 닿은 음 → 지판의 실제 자리로 이어 줍니다 (그 음이 쓰는 줄 위에)
   NOTES.forEach(n => {{
     if (t < n.t - 0.1 || t > n.t + n.dur) return;
-    const lx = laneX(n.i), bx = boardX(n.mm);
-    const fresh = Math.max(0, 1 - Math.abs(t - n.t) / 0.35);
+    const y = ROW[n.str] || ROW[ACTIVE], bx2 = boardX(n.mm);
+    const fresh = Math.max(0, 1 - Math.abs(t - n.t) / 0.3);
 
-    // 레인 → 지판 자리 (가로가 다른 두 축을 잇는 선)
-    g.strokeStyle = n.color; g.globalAlpha = 0.55; g.lineWidth = 1.4;
-    g.beginPath(); g.moveTo(lx, HIT_Y); g.lineTo(bx, y); g.stroke();
-    g.globalAlpha = 1;
-
-    g.save(); g.shadowColor = n.color; g.shadowBlur = 16 + 20 * fresh;
+    g.save(); g.shadowColor = n.color; g.shadowBlur = 10 + 14 * fresh;
     g.fillStyle = n.color;
-    g.beginPath(); g.arc(bx, y, 10 + 5 * fresh, 0, 6.284); g.fill();
+    g.beginPath(); g.arc(bx2, y, 8.5 + 4 * fresh, 0, 6.284); g.fill();
     g.restore();
-    g.fillStyle = '#fff'; g.font = '700 13px system-ui'; g.textAlign = 'center';
-    g.fillText(n.finger === 0 ? '○' : n.finger, bx, y + 4.5);
-
-    // 너트에서 여기까지
-    g.strokeStyle = n.color; g.globalAlpha = 0.35; g.lineWidth = 1.4;
-    g.beginPath(); g.moveTo(56, y); g.lineTo(bx - 13, y); g.stroke();
-    g.globalAlpha = 1;
-    g.fillStyle = n.color; g.font = '600 11.5px ui-monospace,Menlo,monospace';
-    g.textAlign = 'left'; g.fillText(n.mm.toFixed(1) + 'mm', bx + 15, y - 7);
-
-    g.font = '700 12px system-ui';
-    g.fillStyle = n.pos === 1 ? '#199e70' : '#c98500';
-    g.fillText(n.pos + '포지션', 14, HIT_Y - 8);
-    g.textAlign = 'center';
+    g.fillStyle = '#fff'; g.font = '700 11px system-ui'; g.textAlign = 'center';
+    g.fillText(n.finger === 0 ? '○' : n.finger, bx2, y + 4);
   }});
+
+  //| 갈래  아직 시작 전인가 ? 준비·카운트인을 얹는다 : 넘어간다
+  if (t < 0) countIn(t);
 
   requestAnimationFrame(draw);
 }}
+start(READY);
 draw();
-</script></body></html>"""
-
-
-# ══════════════════════════════════════════════════════════════
-#  화면 ② — 결과 리포트
-# ══════════════════════════════════════════════════════════════
-BAR_PPC = 1.55
-BAR_CLAMP = 42
-TR_SPAN = 45.0
-TR_PPC = 88 / TR_SPAN
-
-
-def _sec(x0, top, title, note=""):
-    y = top - 14
-    return [f'<line x1="{x0}" y1="{y-4:.1f}" x2="{x0+8:.1f}" y2="{y-4:.1f}" '
-            f'stroke="{C["axis"]}" stroke-width="2"/>',
-            _txt(x0 + 14, y, title, 11, C["ink2"], "start", 600),
-            _txt(x0 + 16 + len(title) * 12, y, note, 10.5, C["muted"], "start")]
-
-
-def _stack(res, notes, sig, width, x0, step, tol_cent, tol_ms):
-    """악보 · 음정 · 박자 · 궤적을 **한 좌표계 위에** 쌓습니다."""
-    rows = res["rows"]
-    n = len(rows)
-    W = step * n
-    p = []
-
-    def badge(i):
-        r = rows[i]
-        if not r["detected"]:
-            return C["muted"], "?"
-        if abs(r["cent"]) <= tol_cent:
-            return C["good"], "✓"
-        return (C["sharp"], "↑") if r["cent"] > 0 else (C["flat"], "↓")
-
-    top = staff.layout(notes)[0]
-    parts, sc_bottom = staff.line(notes, x0, step, top, right=x0 + W + 10,
-                                  sig=sig, badges=badge, click="playNote")
-    p += parts
-
-    BAR_Y = sc_bottom + 88
-    p += _sec(x0, BAR_Y - 65, "음정", "· 음마다의 평균 — 손가락 자리")
-    p.append(f'<rect x="{x0}" y="{BAR_Y-tol_cent*BAR_PPC:.1f}" width="{W:.1f}" '
-             f'height="{2*tol_cent*BAR_PPC:.1f}" fill="{C["good"]}" opacity="0.15"/>')
-    for cv in (-40, -20, 20, 40):
-        y = BAR_Y - cv * BAR_PPC
-        p.append(f'<line x1="{x0}" y1="{y:.1f}" x2="{x0+W:.1f}" y2="{y:.1f}" '
-                 f'stroke="{C["grid"]}" stroke-width="1"/>')
-        p.append(_txt(x0 - 9, y + 3.5, f'{cv:+d}', 9.5, C["muted"], "end", mono=True))
-    p.append(f'<line x1="{x0}" y1="{BAR_Y}" x2="{x0+W:.1f}" y2="{BAR_Y}" '
-             f'stroke="{C["axis"]}" stroke-width="1.5"/>')
-    p.append(_txt(x0 - 9, BAR_Y + 3.5, "0", 9.5, C["muted"], "end", mono=True))
-    p.append(_txt(x0 - 9, BAR_Y - 77, "센트", 9.5, C["muted"], "end"))
-
-    for i, r in enumerate(rows):
-        x = staff.note_x(i, x0, step)
-        if not r["detected"]:
-            p.append(_txt(x, BAR_Y - 4, "소리 없음", 9.5, C["muted"]))
-            continue
-        c = max(-BAR_CLAMP, min(BAR_CLAMP, r["cent"]))
-        h = abs(c) * BAR_PPC
-        col = C["good"] if abs(r["cent"]) <= tol_cent else (
-            C["sharp"] if r["cent"] > 0 else C["flat"])
-        y = BAR_Y - h if c > 0 else BAR_Y
-        p.append(f'<rect x="{x-15:.1f}" y="{y:.1f}" width="30" '
-                 f'height="{max(h,2.5):.1f}" fill="{col}" rx="3" opacity="0.92"/>')
-        ly = (y - 6) if c > 0 else (y + h + 13)
-        p.append(_txt(x, ly, f'{r["cent"]:+.0f}', 10.5, col, weight=700, mono=True))
-
-    T_Y = BAR_Y + 118
-    p += _sec(x0, T_Y - 14, "박자", "· 첫 음 기준 · 초록 구간이 허용 범위")
-    MS_PX = 0.42
-    for i, r in enumerate(rows):
-        x = staff.note_x(i, x0, step)
-        tw = tol_ms * MS_PX
-        p.append(f'<rect x="{x-tw:.1f}" y="{T_Y-9}" width="{2*tw:.1f}" height="18" '
-                 f'fill="{C["good"]}" opacity="0.15" rx="4"/>')
-        p.append(f'<line x1="{x:.1f}" y1="{T_Y-13}" x2="{x:.1f}" y2="{T_Y+13}" '
-                 f'stroke="{C["axis"]}" stroke-width="1"/>')
-        if not r["detected"]:
-            continue
-        dx = max(-46, min(46, r["ms"] * MS_PX))
-        ok = abs(r["ms"]) <= tol_ms
-        col = C["good"] if ok else (C["sharp"] if r["ms"] > 0 else C["flat"])
-        if abs(dx) > 1.5:
-            p.append(f'<line x1="{x:.1f}" y1="{T_Y}" x2="{x+dx:.1f}" y2="{T_Y}" '
-                     f'stroke="{col}" stroke-width="2.5" stroke-linecap="round" '
-                     f'opacity="0.8"/>')
-        p.append(f'<circle cx="{x+dx:.1f}" cy="{T_Y}" r="5.5" fill="{col}"/>')
-        if not ok:
-            p.append(_txt(x + dx, T_Y + 22, f'{r["ms"]:+.0f}ms', 9.5, col, mono=True))
-    p.append(_txt(x0 + W + 10, T_Y - 4, "◀ 빨리", 9.5, C["flat"], "start"))
-    p.append(_txt(x0 + W + 10, T_Y + 10, "늦게 ▶", 9.5, C["sharp"], "start"))
-
-    TR_Y0 = T_Y + 146
-    p += _sec(x0, TR_Y0 - 88, "궤적", "· 음 안에서의 흔들림 — 활")
-
-    def X(u):
-        return x0 + step * u
-
-    def Y(c):
-        return TR_Y0 - max(-TR_SPAN, min(TR_SPAN, c)) * TR_PPC
-
-    p.append(f'<rect x="{x0}" y="{Y(tol_cent):.1f}" width="{W:.1f}" '
-             f'height="{Y(-tol_cent)-Y(tol_cent):.1f}" fill="{C["good"]}" opacity="0.13"/>')
-    for cv in (-40, -20, 0, 20, 40):
-        y, main = Y(cv), cv == 0
-        p.append(f'<line x1="{x0}" y1="{y:.1f}" x2="{x0+W:.1f}" y2="{y:.1f}" '
-                 f'stroke="{C["axis"] if main else C["grid"]}" '
-                 f'stroke-width="{2 if main else 1}"/>')
-        p.append(_txt(x0 - 9, y + 3.5, f'{cv:+d}' if cv else '0', 9.5,
-                      C["muted"], "end", mono=True))
-    for i in range(1, n):
-        p.append(f'<line x1="{X(i):.1f}" y1="{Y(TR_SPAN):.1f}" x2="{X(i):.1f}" '
-                 f'y2="{Y(-TR_SPAN):.1f}" stroke="{C["grid"]}" stroke-width="1"/>')
-
-    # 음이 바뀌는 순간에는 아직 앞 음의 소리가 남아 있어 센트가 수백까지 튑니다.
-    # 그 구간은 이어 그리지 않고 **끊습니다**. 안 끊으면 그래프가 스파이크 투성이가 됩니다.
-    runs, cur = [], []
-    for u, v in res["trace"]:
-        if abs(v) <= TR_SPAN * 0.97:
-            cur.append((u, v))
-        else:
-            if len(cur) > 2:
-                runs.append(cur)
-            cur = []
-    if len(cur) > 2:
-        runs.append(cur)
-
-    for sign, col in ((1, C["sharp"]), (-1, C["flat"])):
-        for run in runs:
-            seg = []
-            for u, v in run + [(run[-1][0], 0.0)]:
-                if v * sign > 0:
-                    seg.append((X(u), Y(v)))
-                else:
-                    if len(seg) > 1:
-                        d = (f'M {seg[0][0]:.1f} {TR_Y0} '
-                             + " ".join(f'L {a:.1f} {b:.1f}' for a, b in seg)
-                             + f' L {seg[-1][0]:.1f} {TR_Y0} Z')
-                        p.append(f'<path d="{d}" fill="{col}" opacity="0.30"/>')
-                    seg = []
-
-    for i in range(n):
-        p.append(f'<line x1="{X(i)+3:.1f}" y1="{TR_Y0}" x2="{X(i+1)-3:.1f}" '
-                 f'y2="{TR_Y0}" stroke="{C["ink"]}" stroke-width="2.5" '
-                 f'opacity="0.85" stroke-linecap="round"/>')
-
-    for run in runs:
-        d = "M " + " L ".join(f'{X(u):.1f} {Y(v):.1f}' for u, v in run)
-        p.append(f'<path d="{d}" fill="none" stroke="{C["trace"]}" stroke-width="2" '
-                 f'stroke-linejoin="round"/>')
-
-    lx = x0 + W + 10
-    p.append(_txt(lx, TR_Y0 - 40, "높게", 10, C["sharp"], "start", 600))
-    p.append(_txt(lx, TR_Y0 + 4, "목표", 10, C["ink"], "start", 600))
-    p.append(_txt(lx, TR_Y0 + 46, "낮게", 10, C["flat"], "start", 600))
-    p.append(_txt(lx, Y(tol_cent) - 5, f"±{tol_cent:.0f} 허용", 9, C["muted"], "start"))
-
-    H = TR_Y0 + 100
-    p.append(f'<line id="phead" x1="{x0}" y1="{top-42}" x2="{x0}" y2="{H-14}" '
-             f'stroke="{C["trace"]}" stroke-width="1.6" opacity="0" '
-             f'style="pointer-events:none"/>')
-
-    return (f'<svg viewBox="0 0 {width} {H}" width="100%" '
-            f'style="max-width:100%;height:auto;display:block">{"".join(p)}</svg>'), H
-
-
-def stack_height(notes, width: int = 900) -> int:
-    """리포트 가운데 그림의 높이 — 앱이 창 크기를 잡는 데 씁니다."""
-    top = staff.layout(notes)[0]
-    _, sc_bottom = staff.line(notes, 80, (width - 116 - 80) / len(notes), top,
-                              right=width, sig=("♯", []))
-    return int(sc_bottom + 88 + 118 + 146 + 100)
-
-
-def report_height(notes, width: int = 900) -> int:
-    return stack_height(notes, width) + 750
-
-
-def weak_notes(res, tol_cent, top=3):
-    """가장 먼저 고칠 음 — 오차가 큰 순서대로.
-
-    결과를 본 사람이 바로 답을 얻어야 하는 질문은 하나입니다.
-    "그래서 나는 어느 음을 다시 연습해야 하지?"
-    """
-    bad = [(i, r) for i, r in enumerate(res["rows"])
-           if r["detected"] and abs(r["cent"]) > tol_cent]
-    bad.sort(key=lambda x: -abs(x[1]["cent"]))
-    return bad[:top]
-
-
-def headline(res, tol_cent):
-    """한 줄 진단 — 무엇이 문제인지."""
-    det = [r for r in res["rows"] if r["detected"]]
-    if not det:
-        return "소리를 찾지 못했습니다."
-    bad = [r for r in det if abs(r["cent"]) > tol_cent]
-    if not bad:
-        return f"{len(det)}음 모두 ±{tol_cent:.0f}센트 안입니다. 다음 단계로 넘어가도 좋습니다."
-    m = res["mean_cent"]
-    if m < -6:
-        return "전체적으로 음이 <b>낮게</b> 연주됐습니다. 손 전체가 너트 쪽으로 치우쳐 있습니다."
-    if m > 6:
-        return "전체적으로 음이 <b>높게</b> 연주됐습니다. 손 전체가 브리지 쪽으로 치우쳐 있습니다."
-    return "치우침은 없지만 <b>음마다 들쭉날쭉</b>합니다. 자리를 외우기보다 소리로 확인하는 연습이 필요합니다."
-
-
-def coach(res, notes, tol_cent, tol_ms):
-    """숫자를 사람 말로 바꿉니다. 지적은 많아야 넷."""
-    rows = [r for r in res["rows"] if r["detected"]]
-    tips = []
-    if not rows:
-        return [("확인", "소리를 못 찾았습니다. 마이크와 녹음 길이를 확인해 주세요.")]
-
-    low = [r for r in rows if r["cent"] < -tol_cent]
-    high = [r for r in rows if r["cent"] > tol_cent]
-    if len(low) >= 2:
-        w = min(rows, key=lambda r: r["cent"])
-        tips.append(("음정", f'{len(low)}개 음이 낮습니다. 특히 <b>{w["ko"]}</b>가 '
-                             f'{abs(w["cent"]):.0f}센트 낮습니다 '
-                             f'({w["position"]}포지션 {w["finger"]}번). '
-                             f'손 전체가 너트 쪽으로 치우쳐 있습니다.'))
-    elif len(high) >= 2:
-        w = max(rows, key=lambda r: r["cent"])
-        tips.append(("음정", f'{len(high)}개 음이 높습니다. 특히 <b>{w["ko"]}</b>가 '
-                             f'{w["cent"]:.0f}센트 높습니다.'))
-    else:
-        tips.append(("음정", f'{len(rows)}개 중 {sum(1 for r in rows if r["ok"])}개가 '
-                             f'±{tol_cent:.0f}센트 안입니다. 좋습니다.'))
-
-    sh = music.shift_index(notes)
-    if sh is not None and sh < len(res["rows"]) and res["rows"][sh]["detected"]:
-        r = res["rows"][sh]
-        tips.append(("포지션", f'{notes[sh-1]["position"]}→{r["position"]}포지션으로 '
-                               f'옮기는 <b>{r["ko"]}</b>: {r["cent"]:+.0f}센트, '
-                               f'{r["ms"]:+.0f}ms. '
-                               f'<b>{notes[sh-1]["ko"]}</b>를 짚어 소리로 확인한 뒤 '
-                               f'올라가면 자리를 잡기 쉽습니다.'))
-
-    shaky = max(rows, key=lambda r: r["std"])
-    tips.append(("활", f'<b>{shaky["ko"]}</b>의 흔들림이 ±{shaky["std"]:.0f}센트로 '
-                       f'가장 큽니다. 같은 음을 활만 길게 쓰는 연습이 도움이 됩니다.'))
-
-    late = [r for r in rows if r["ms"] > tol_ms]
-    if late:
-        tips.append(("박자", f'{"·".join(r["ko"] for r in late)}에서 늦게 들어갑니다. '
-                             f'대개 손을 옮기거나 활을 바꾸는 데 걸리는 시간입니다.'))
-    return tips
-
-
-def report(res, notes, sig, bpm, wav_bytes, title, width=900,
-           tol_cent=12.0, tol_ms=40.0) -> str:
-    n = len(notes)
-    x0 = 80
-    step = (width - 116 - x0) / n
-    beat = 60.0 / bpm
-    b64 = base64.b64encode(wav_bytes).decode()
-
-    stats = [
-        ("음정 정확도", f'{res["pitch_pct"]:.0f}%',
-         f'{n}음 중 {round(res["pitch_pct"]*n/100)}개가 ±{tol_cent:.0f}센트 안',
-         C["flat"] if res["pitch_pct"] < 60 else C["good"]),
-        ("평균 치우침", f'{res["mean_cent"]:+.0f}', "센트 · +면 높은 쪽, −면 낮은 쪽",
-         C["flat"] if res["mean_cent"] < -5 else
-         (C["sharp"] if res["mean_cent"] > 5 else C["good"])),
-        ("박자 정확도", f'{res["time_pct"]:.0f}%', f'±{tol_ms:.0f}ms 안',
-         C["good"] if res["time_pct"] >= 75 else C["sharp"]),
-        ("활 안정도", f'±{res["bow_std"]:.0f}', "센트 · 음 하나 안에서의 흔들림", C["ink2"]),
-    ]
-    stat_html = "".join(
-        f'<div class="stat"><div class="lab">{a}</div>'
-        f'<div class="num" style="color:{d}">{b}</div>'
-        f'<div class="sub">{c}</div></div>' for a, b, c, d in stats)
-
-    tip_html = "".join(f'<div class="tip"><span class="tag">{t}</span>'
-                       f'<span>{s}</span></div>' for t, s in coach(res, notes, tol_cent, tol_ms))
-
-    seg_html = "".join(
-        f'<button onclick="playRange({i*4*beat:.3f},{min((i+1)*4,n)*beat:.3f})">'
-        f'{i+1}마디</button>' for i in range((n + 3) // 4))
-
-    det = [i for i, r in enumerate(res["rows"]) if r["detected"]]
-    worst = sorted(det, key=lambda i: -abs(res["rows"][i]["cent"]))[:3]
-    worst_html = "".join(
-        f'<button class="bad" onclick="playNote({i})">{res["rows"][i]["ko"]} '
-        f'{res["rows"][i]["cent"]:+.0f}</button>' for i in sorted(worst))
-
-    js = json.dumps([{"ko": r["ko"], "cent": None if not r["detected"] else round(r["cent"], 1)}
-                     for r in res["rows"]], ensure_ascii=False)
-    stack_svg, _stack_h = _stack(res, notes, sig, width, x0, step, tol_cent, tol_ms)
-
-    # 가장 먼저 고칠 음 — 결과를 본 직후 답해야 하는 질문
-    weak = weak_notes(res, tol_cent)
-    if weak:
-        rank_html = "".join(
-            f'<button class="wk" onclick="playNote({i})">'
-            f'<span class="rk">{k+1}</span>'
-            f'<span class="wko">{r["ko"]}</span>'
-            f'<span class="wcent" style="color:{C["sharp"] if r["cent"]>0 else C["flat"]}">'
-            f'{r["cent"]:+.0f}<i>센트</i></span>'
-            f'<span class="wsub">{r["position"]}포지션 '
-            f'{"개방" if r["finger"]==0 else str(r["finger"])+"번"} · '
-            f'{"높게" if r["cent"]>0 else "낮게"}</span>'
-            f'<span class="wply">▶ 듣기</span></button>'
-            for k, (i, r) in enumerate(weak))
-    else:
-        rank_html = ('<div style="color:#0ca30c;font-size:13px;padding:6px 0">'
-                     '이번엔 허용 범위를 벗어난 음이 없습니다.</div>')
-
-    return f"""<!DOCTYPE html><html><head><meta charset="utf-8"><style>
- *{{box-sizing:border-box}}
- body{{margin:0;background:{C['bg']};color:{C['ink']};
-   font-family:system-ui,-apple-system,'Malgun Gothic',sans-serif}}
- #wrap{{width:{width+40}px;margin:0 auto;padding:6px 20px 20px}}
- .cap{{color:{C['muted']};font-size:12.5px;margin:0 0 12px}}
- .card{{background:{C['panel']};border:1px solid {C['line']};border-radius:14px;
-   padding:14px 16px;margin-bottom:12px}}
- .ct{{font-size:13px;font-weight:600;color:{C['ink2']};margin-bottom:2px}}
- .cs{{font-size:11.5px;color:{C['muted']};margin-bottom:10px;line-height:1.6}}
- .stats{{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px}}
- .stat{{background:{C['panel']};border:1px solid {C['line']};border-radius:12px;
-   padding:11px 13px}}
- .lab{{font-size:11px;color:{C['muted']}}}
- .num{{font-size:25px;font-weight:700;line-height:1.25;
-   font-family:ui-monospace,Menlo,monospace}}
- .sub{{font-size:10.5px;color:{C['muted']};line-height:1.35}}
- .row{{display:flex;gap:8px;align-items:center;flex-wrap:wrap}}
- button{{background:#262624;color:#fff;border:1px solid {C['axis']};border-radius:8px;
-   padding:7px 13px;font-size:12.5px;cursor:pointer;font-family:inherit}}
- button:hover{{background:#333330}}
- .main{{background:{C['trace']};color:#20200f;border:none;font-weight:700}}
- .bad{{border-color:{C['flat']};color:{C['flat']};
-   font-family:ui-monospace,Menlo,monospace}}
- .hint{{font-size:11.5px;color:{C['muted']};margin-left:4px}}
- .tip{{display:flex;gap:9px;align-items:flex-start;font-size:12.5px;line-height:1.6;
-   padding:6px 0;border-top:1px solid {C['line']}}}
- .tip:first-child{{border-top:none}}
- .tag{{flex:none;background:#262624;color:{C['ink2']};border-radius:5px;padding:1px 7px;
-   font-size:11px;font-weight:600;margin-top:2px}}
- b{{color:{C['ink']}}}
- #now{{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:{C['trace']};
-   min-width:140px}}
- .focus{{border-color:#4a4a44;background:#1f1f1d}}
- .ranks{{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}}
- .wk{{display:grid;grid-template-columns:auto 1fr;grid-template-rows:auto auto auto;
-   gap:2px 10px;align-items:center;text-align:left;padding:11px 13px;
-   background:#141413;border:1px solid {C['axis']};border-radius:11px}}
- .wk:hover{{background:#232321}}
- .rk{{grid-row:1/3;width:26px;height:26px;border-radius:50%;background:#33322e;
-   color:{C['ink2']};font-size:13px;font-weight:700;display:flex;
-   align-items:center;justify-content:center}}
- .wko{{font-size:17px;font-weight:700}}
- .wcent{{font-family:ui-monospace,Menlo,monospace;font-size:19px;font-weight:700;
-   line-height:1.1}}
- .wcent i{{font-size:10.5px;font-style:normal;margin-left:2px;opacity:.75}}
- .wsub{{grid-column:2;font-size:11px;color:{C['muted']}}}
- .wply{{grid-column:1/3;font-size:11px;color:{C['trace']};margin-top:5px}}
-</style></head><body><div id="wrap">
- <div class="cap">{title} · {bpm} BPM · {n}음</div>
- <div class="stats">{stat_html}</div>
-
- <div class="card focus">
-   <div class="ct">가장 먼저 고칠 음</div>
-   <div class="cs">{headline(res, tol_cent)}</div>
-   <div class="ranks">{rank_html}</div>
- </div>
-
- <div class="card">
-   <div class="ct">음별 상세 분석</div>
-   <div class="cs">악보 아래 세 층이 같은 가로 좌표 위에 있습니다 — 위에서 아래로
-     <b>어느 음 / 얼마나 높거나 낮았나 / 빨랐나 늦었나 / 음 안에서 어떻게 흔들렸나</b>.
-     음표를 누르면 <b>그 부분 내 연주</b>가 다시 들리고, 세로선이 네 층을 함께 지나갑니다.</div>
-   {stack_svg}
- </div>
-
- <div class="card">
-   <div class="ct">다시 듣기 · 반복 연습</div>
-   <div style="height:8px"></div>
-   <div class="row">
-     <button class="main" onclick="playRange(0,{n*beat:.3f})">▶ 전체</button>
-     {seg_html}
-     <span class="hint">오차가 큰 음 →</span>
-     {worst_html}
-     <button onclick="stopAll()">■ 정지</button>
-     <span id="now"></span>
-   </div>
- </div>
-
- <div class="card">
-   <div class="ct">오늘의 한마디</div>
-   <div style="height:4px"></div>
-   {tip_html}
- </div>
-
- <audio id="rec" src="data:audio/wav;base64,{b64}"></audio>
-</div>
-<script>
-const NOTES = {js};
-const X0 = {x0}, STEP = {step}, BEAT = {beat}, T0 = {res["t0"]:.4f};
-const rec = document.getElementById('rec');
-const ph = document.getElementById('phead'), now = document.getElementById('now');
-let stopAt = null, raf = null;
-
-// 화면의 0초는 '첫 소리가 난 자리'입니다. 녹음 파일에서는 T0 만큼 뒤죠.
-function playRange(a, b) {{
-  stopAt = T0 + b; rec.currentTime = T0 + a; rec.play();
-  if (!raf) raf = requestAnimationFrame(tick);
-}}
-function playNote(i) {{ playRange(i * BEAT, (i + 1) * BEAT); }}
-function stopAll() {{ rec.pause(); stopAt = null; move(null); }}
-
-function move(t) {{
-  if (t === null) {{ ph.style.opacity = 0; now.textContent = ''; return; }}
-  const x = X0 + STEP * (t / BEAT);
-  ph.setAttribute('x1', x.toFixed(1)); ph.setAttribute('x2', x.toFixed(1));
-  ph.style.opacity = 0.9;
-  const n = NOTES[Math.min(NOTES.length - 1, Math.max(0, Math.floor(t / BEAT)))];
-  now.textContent = n.cent === null ? n.ko + '  —'
-    : `${{n.ko}}  ${{n.cent > 0 ? '+' : ''}}${{n.cent.toFixed(0)}}센트`;
-}}
-function tick() {{
-  if (rec.paused) {{ raf = null; move(null); return; }}
-  if (stopAt !== null && rec.currentTime >= stopAt - 0.01) {{
-    rec.pause(); raf = null; move(null); return;
-  }}
-  move(rec.currentTime - T0);
-  raf = requestAnimationFrame(tick);
-}}
 </script></body></html>"""

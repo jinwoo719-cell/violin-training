@@ -7,6 +7,8 @@
 
 import math
 
+#| 흐름  음계 하나 → 연주할 수 있는 음 목록 (높이·지판자리·손가락·포지션·활·슬러)
+
 # ══════════════════════════════════════════════════════════════
 #  1. 악기
 # ══════════════════════════════════════════════════════════════
@@ -39,6 +41,10 @@ def mm_from_freq(freq: float, f_open: float, length: float = STRING_LENGTH_MM) -
     줄의 진동수는 진동 길이에 반비례합니다.  f = f_open x L / (L - d)
     검산: 한 옥타브 위는 정확히 줄의 절반이 나옵니다.
     """
+    #| 흐름  주파수를 너트에서의 거리(mm)로 바꾼다
+    #| 입력  낼 주파수 · 그 줄의 개방현 주파수
+    #| 단계  f = f_open x L / (L - d) 를 d 에 대해 푼 식을 적용한다
+    #| 출력  너트에서 몇 mm
     return length * (1 - f_open / freq)
 
 
@@ -98,13 +104,23 @@ def assign_positions(semis):
           옮깁니다. 그 자리가 바로 1포지션 3번 손가락이 짚던 자리라서,
           짚어 보고 소리로 확인한 뒤 올라갈 수 있습니다.
     """
+    #| 흐름  음계 전체를 보고 손을 옮길 자리를 한 번에 정한다
+    #| 입력  개방현에서 몇 반음 위인지의 목록
+    #| 갈래  1포지션으로 끝까지 닿나 ? 안 옮긴다 : 옮길 자리를 찾는다
+    #| 단계  3포지션 1번 손가락 자리(+5반음)를 옮기는 지점으로 잡는다
+    #| 반복  음마다
+        #| 단계     옮기는 지점 앞이면 1포지션, 뒤면 3포지션 손가락표를 쓴다
+    #| 출력  음마다 (포지션, 손가락)
     if max(semis) <= 8:                       # 1포지션으로 충분
         return [(1, FINGER_1ST[s]) for s in semis]
 
     shift = next((i for i, s in enumerate(semis) if s >= 5), len(semis))
     out = []
     for i, s in enumerate(semis):
-        if i < shift:
+        #| 갈래  개방현인가 ? 손 위치와 상관없이 개방 : 포지션에 맞는 손가락
+        if s == 0:
+            out.append((1, 0))
+        elif i < shift:
             out.append((1, FINGER_1ST[s]))
         else:
             out.append((3, FINGER_3RD.get(s, 4)))
@@ -129,6 +145,10 @@ def key_signature(root_letter: str, mode: str):
     화성·가락단조에서 올린 음은 조표가 아니라 그 자리에 임시표로 붙습니다.
     (그래서 A화성단조는 조표가 없고 솔♯에만 ♯이 붙습니다)
     """
+    #| 흐름  으뜸음과 조성으로 조표를 정한다
+    #| 갈래  장조인가 ? 장조표에서 찾는다 : 단조표에서 찾는다
+    #| 갈래  ♯쪽인가 ? F C G D A E B 순으로 자른다 : B E A D G C F 순으로 자른다
+    #| 출력  (기호, 붙는 음들)
     n = MAJOR_KEY.get(root_letter, 0) if mode == "장조" else MINOR_KEY.get(root_letter, 0)
     if n >= 0:
         return "♯", SHARP_ORDER[:n]
@@ -138,6 +158,20 @@ def key_signature(root_letter: str, mode: str):
 # ══════════════════════════════════════════════════════════════
 #  5. 음 목록 만들기  ← 화면 세 개가 전부 이 결과를 씁니다
 # ══════════════════════════════════════════════════════════════
+def notes_from(string_name: str, pattern, mode: str, slur: int = 1, bpm: int = 60,
+               place=None):
+    """반음 목록 → 연주할 수 있는 음 목록.
+
+    음계든 교정 드릴이든 결국 '반음 목록'입니다.
+    같은 함수를 쓰므로 화면·분석이 그대로 돌아갑니다.
+
+    place 를 주면 손가락·포지션을 그대로 씁니다.
+    (교정 드릴은 원래 음계에서 짚던 자리를 그대로 연습해야 뜻이 있습니다)
+    """
+    #| 흐름  반음 목록을 음이름·지판자리·손가락·활이 다 붙은 음 목록으로
+    return _build(string_name, list(pattern), mode, slur, bpm, place)
+
+
 def build_notes(string_name: str, mode: str, slur: int = 1, bpm: int = 60,
                 first_position_only: bool = False):
     """음계 하나를 '연주할 수 있는 음 목록'으로 바꿉니다.
@@ -147,17 +181,42 @@ def build_notes(string_name: str, mode: str, slur: int = 1, bpm: int = 60,
       letter/oct   악보 어디에 그리나    acc              임시표
       bow/slur     활을 어느 쪽으로      t/dur            언제 몇 초
     """
-    st = STRING_BY_NAME[string_name]
+    #| 흐름  음계 하나를 화면 세 개가 그대로 쓸 수 있는 음 목록으로 만든다
+    #| 입력  줄 · 음계 · 슬러 · BPM · 1포지션만 여부
+    #| 갈래  1포지션만인가 ? 7반음까지 자른다 : 한 옥타브 그대로 둔다
+    #| 호출  key_signature → 조표
+    #| 호출  assign_positions → 음마다 (포지션, 손가락)
+    #| 반복  음계의 음마다
+        #| 단계     으뜸음에서 몇 번째인지로 음이름(A~G)과 옥타브를 정한다
+        #| 단계     음이름의 본래 높이와 실제 높이의 차 = 임시표
+        #| 갈래     조표에 이미 있나 ? 악보에 안 쓴다 : ♯/♭/♮ 를 붙인다
+        #| 호출     mm_from_freq → 지판 위 mm
+    #| 반복  다시 음마다 — 활과 슬러
+        #| 단계     슬러 하나 = 활 한 번. 그룹마다 다운↔업을 바꾼다
+    #| 출력  음 목록 (화면 ①·② 와 분석이 전부 이걸 씀)
     pattern = SCALES[mode]
     if first_position_only:
         pattern = [s for s in pattern if s <= 7]      # 1포지션에서 편하게 닿는 데까지
+    return _build(string_name, list(pattern), mode, slur, bpm)
+
+
+def _build(string_name, pattern, mode, slur, bpm, place=None):
+    st = STRING_BY_NAME[string_name]
     sig, sig_notes = key_signature(st["letter"], mode)
     beat = 60.0 / bpm
 
     root_li = LETTERS.index(st["letter"])
-    place = assign_positions(pattern)
+    place = place or assign_positions(pattern)
+
+    # 반음 → 음계에서 몇 번째 음인지.
+    # 음계는 0,1,2… 순서지만 교정 드릴은 [0,9,0,9] 처럼 뒤죽박죽입니다.
+    # 순서가 아니라 **반음**으로 음이름을 정해야 이름이 안 깨집니다.
+    deg_of = {sm: i for i, sm in enumerate(SCALES[mode])}
+
     notes = []
-    for deg, semi in enumerate(pattern):
+    for pos_in_list, semi in enumerate(pattern):
+        deg = deg_of.get(semi, min(deg_of, key=lambda k: abs(k - semi)) and
+                         deg_of[min(deg_of, key=lambda k: abs(k - semi))])
         letter = LETTERS[(root_li + deg) % 7]
         octave = st["octave"] + (root_li + deg) // 7
 
@@ -172,7 +231,7 @@ def build_notes(string_name: str, mode: str, slur: int = 1, bpm: int = 60,
         acc = "" if delta == key_delta else ("♯" if delta > 0 else
                                              ("♭" if delta < 0 else "♮"))
 
-        pos, finger = place[deg]
+        pos, finger = place[pos_in_list]
         freq = st["freq"] * 2 ** (semi / 12)
 
         notes.append({
@@ -183,7 +242,7 @@ def build_notes(string_name: str, mode: str, slur: int = 1, bpm: int = 60,
             "mm": mm_from_freq(freq, st["freq"]),
             "position": pos, "finger": finger,
             "string": string_name,
-            "t": deg * beat, "dur": beat, "beat": deg,
+            "t": pos_in_list * beat, "dur": beat, "beat": pos_in_list,
         })
 
     # ── 활 방향과 슬러 ──
@@ -200,6 +259,7 @@ def build_notes(string_name: str, mode: str, slur: int = 1, bpm: int = 60,
 
 def shift_index(notes):
     """포지션이 바뀌는 자리의 인덱스. 없으면 None."""
+    #| 흐름  앞 음과 포지션이 달라지는 첫 자리를 찾는다
     for i in range(1, len(notes)):
         if notes[i]["position"] != notes[i - 1]["position"]:
             return i
@@ -208,3 +268,40 @@ def shift_index(notes):
 
 def title_of(string_name: str, mode: str) -> str:
     return f'{STRING_BY_NAME[string_name]["name"]}{mode} · {string_name}현'
+
+
+# ══════════════════════════════════════════════════════════════
+#  6. 교정 드릴 — 리포트에서 "이 부분 연습하기" 로 넘어오는 것
+# ══════════════════════════════════════════════════════════════
+def drill_note(base, idx, mode, bpm):
+    """문제 음 하나를 개방현과 번갈아 짚습니다.
+
+    개방현은 늘 맞는 소리라서, 바로 앞뒤에 두면
+    귀가 기준을 잃지 않습니다. 음정 교정의 기본형입니다.
+    """
+    #| 흐름  개방현 ↔ 문제 음 을 네 번 번갈아
+    #| 입력  원래 음 목록 · 문제 음의 자리
+    #| 출력  음 목록 (개방-대상 x4)
+    n = base[idx]
+    # 원래 음계에서 짚던 자리를 그대로 — 드릴에서만 손가락이 바뀌면 뜻이 없습니다
+    place = [(1, 0), (n["position"], n["finger"])] * 4
+    return notes_from(n["string"], [0, n["semi"]] * 4, mode, 1, bpm, place)
+
+
+def drill_shift(base, mode, bpm):
+    """포지션을 옮기는 자리 앞뒤만 잘라 두 번 반복합니다."""
+    #| 흐름  이동 직전 2음 + 직후 2음을 두 번
+    #| 갈래  옮기는 자리가 있나 ? 그 앞뒤를 자른다 : 원래 음계를 돌려준다
+    sh = shift_index(base)
+    if sh is None:
+        return base
+    cut = base[max(0, sh - 2):sh + 2]
+    seg = [n["semi"] for n in cut]
+    place = [(n["position"], n["finger"]) for n in cut]
+    return notes_from(base[0]["string"], seg * 2, mode, 1, bpm, place * 2)
+
+
+def drill_longtone(string_name, mode, bpm=30):
+    """개방현을 한 활에 네 음씩 — 활이 흔들리는지 보는 연습."""
+    #| 흐름  개방현만 여덟 번, 4음 슬러 (한 활에 네 음)
+    return notes_from(string_name, [0] * 8, mode, 4, bpm)
