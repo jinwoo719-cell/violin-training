@@ -23,8 +23,10 @@ from theme import C          # 색은 theme.py 한곳에서
 
 # ── 논리 크기 (가로 폰 기준) ──
 W = 880             # 전체 폭
-H = 320             # 전체 높이 (가로 폰 한 화면)
+H = 364             # 전체 높이 (가로 폰 한 화면)
 PANEL_W = 232       # 오른쪽 「다음 음 안내」 폭
+BODY_EDGE = 34      # 지판 오른쪽에 남기는 몸통 가장자리
+                    # (브리지는 안내 패널로 옮겼습니다 — 지판을 넓게 쓰려고)
 GAPX = 12
 LW = W - PANEL_W - GAPX       # 왼쪽(악보+캔버스) 폭
 BAR_H = 24          # 맨 아래 설명 줄
@@ -85,6 +87,17 @@ def guide(notes, sig, bpm: int, inst: str = "violin", ready: int = 5) -> str:
 
     score_svg, score_h = _score(notes, sig, x0, step)
     cv_h = H - score_h - BAR_H
+
+    # 지판에 **이번 연습이 쓰는 만큼만** 보여줍니다.
+    # 늘 190mm 를 그리면, 낮은 자리만 쓰는 악보는 왼쪽 구석에 몰려 붙습니다.
+    #| 단계  이번 악보가 쓰는 지판 범위에 맞춰 보여줄 폭을 정한다
+    need = max([n["mm"] for n in notes] + [40.0])
+    view_mm = min(ins["view_mm"], max(60.0, need * 1.22 + 10))
+
+    #| 호출  instrument.bridge_html → 「어느 줄을 켜나」 (지판 옆이 아니라 패널에)
+    bridge_svg = instrument.bridge_html(
+        ins, PANEL_W - 26, 58,
+        colors={s: STRING_COLOR[s] for s in ins["strings"]})
     # 내 악보는 줄을 넘나들 수 있습니다 — 쓰는 줄을 모두 밝게 합니다
     used = [s for s in ins["strings"] if any(n["string"] == s for n in notes)]
     active = notes[0]["string"]
@@ -171,8 +184,10 @@ def guide(notes, sig, bpm: int, inst: str = "violin", ready: int = 5) -> str:
       <div class="pbow" id="pbow">&nbsp;</div>
       <div class="ppos" id="ppos">&nbsp;</div>
     </div>
-    <div style="flex:none">{instrument.hand_html(ins, 100)}</div>
+    <div style="flex:none">{instrument.hand_html(ins, 78)}</div>
    </div>
+   <div class="pt" style="margin:2px 0 3px">어느 줄을 켜나</div>
+   {bridge_svg}
   </div>
  </div>
  <div id="bar">
@@ -200,14 +215,17 @@ const NOTES = {json.dumps(data, ensure_ascii=False)};
 const STRINGS = {json.dumps(strings, ensure_ascii=False)};
 const MARKS = {json.dumps(marks)};
 const ART = {json.dumps(art, ensure_ascii=False)};
-const ACTIVE = "{active}", USED = {json.dumps(used)}, VIEW_MM = {ins["view_mm"]};
+const ACTIVE = "{active}", USED = {json.dumps(used)}, VIEW_MM = {view_mm:.1f};
 const LW = {LW}, CV = {cv_h};
 const X0 = {x0}, STEP = {step}, BEAT = {60.0 / bpm};
 const TOTAL = {len(notes) * 60.0 / bpm};
-const HIT_Y = {LANE_H};                     // 판정선
-const BOARD_TOP = HIT_Y + 8, BOARD_BOT = CV - 14;
+// 지판은 네 줄이 들어갈 만큼만 쓰고, 남는 높이는 전부 **노드 레인**에 줍니다.
+// (레인이 길수록 앞의 음이 더 일찍 보입니다)
 const ROW_GAP = {ROW_GAP};
-const SCROLL_W = {ins["scroll_w"]}, BODY_W = {ins["body_w"]};
+const BOARD_BOT = CV - 6;
+const BOARD_TOP = BOARD_BOT - (11 + 3 * ROW_GAP + 14);
+const HIT_Y = BOARD_TOP - 8;                // 판정선
+const SCROLL_W = {ins["scroll_w"]}, BODY_W = {BODY_EDGE};
 const BX0 = SCROLL_W, BX1 = LW - BODY_W;    // 지판의 왼쪽·오른쪽 끝
 const LEAD_BASE = {LEAD};                   // 1.0배일 때 몇 초 앞까지 보이나
 const ROW = {{}};
@@ -630,6 +648,20 @@ function panel(i) {{
   }}
   const open0 = document.getElementById('ft0');
   if (open0) open0.style.display = 'none';
+  // 브리지 — 켜야 하는 줄만 밝게
+  //| 반복  네 줄마다 — 이번에 켜는 줄인지 표시
+  STRINGS.forEach(s => {{
+    const e = document.getElementById('bs' + s.name);
+    if (!e) return;
+    const c = e.querySelector('circle'), tx = e.querySelector('text');
+    const on = i >= 0 && NOTES[i].str === s.name;
+    c.setAttribute('fill', on ? s.color : '#0d1117');
+    c.setAttribute('fill-opacity', on ? 1 : 0.62);
+    c.setAttribute('stroke', on ? '#0d1117' : s.color);
+    c.setAttribute('stroke-opacity', on ? 0.9 : 0.5);
+    tx.setAttribute('fill', on ? '#0d1117' : s.color);
+    tx.setAttribute('fill-opacity', on ? 1 : 0.6);
+  }});
   if (i < 0) return;
   const n = NOTES[i];
   P.ko.textContent = n.ko;

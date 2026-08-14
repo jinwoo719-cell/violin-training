@@ -132,6 +132,9 @@ VIOLIN = {
     "body_img": data_url("violin_body.png"),
     "body_aspect": 210 / 99,       # 사진의 세로/가로
     "body_str": (89.5 / 210, 123.5 / 210),   # 사진 속 E현·G현의 세로 자리
+    # 네 줄 각각의 세로 자리 (E·A·D·G) — 브리지 그림의 점을 여기에 찍습니다
+    "body_str4": (89.5 / 210, 100 / 210, 112 / 210, 123.5 / 210),
+    "body_bridge": 54 / 99,        # 사진 속 브리지의 가로 자리 (0~1)
     "hand_img": data_url("hand.png"),
     "hand_tips": VIOLIN_HAND_TIPS,
     "scroll": VIOLIN_SCROLL,
@@ -183,7 +186,9 @@ def hand_html(inst, size: int = 108, mark="#ef4444", dim="#2f3644",
     img = inst.get("hand_img", "")
     tips = inst.get("hand_tips", VIOLIN_HAND_TIPS)
     h = int(size * 154 / 129)
-    pad = 15                       # 손끝 배지가 위로 삐져나갈 자리
+    pad = max(11, int(size * 0.15))   # 손끝 배지가 위로 삐져나갈 자리
+    r = size * 0.105                  # 배지도 그림 크기를 따라갑니다
+    fs = size * 0.115
     p = [f'<div style="position:relative;width:{size}px;height:{h + pad}px">']
     if img:
         p.append(f'<img src="{img}" width="{size}" height="{h}" '
@@ -193,16 +198,71 @@ def hand_html(inst, size: int = 108, mark="#ef4444", dim="#2f3644",
              f'style="position:absolute;left:0;top:0">')
     for f, (fx, fy) in tips.items():
         cx, cy = fx * size, fy * h + pad
-        p.append(f'<g id="ft{f}"><circle cx="{cx:.1f}" cy="{cy:.1f}" r="10.5" '
-                 f'fill="{dim}" stroke="#0d1117" stroke-width="1.5"/>'
-                 f'<text x="{cx:.1f}" y="{cy + 3.8:.1f}" text-anchor="middle" '
-                 f'font-size="11.5" font-weight="700" fill="{ink}" '
+        p.append(f'<g id="ft{f}"><circle cx="{cx:.1f}" cy="{cy:.1f}" r="{r:.1f}" '
+                 f'fill="{dim}" stroke="#0d1117" stroke-width="1.4"/>'
+                 f'<text x="{cx:.1f}" y="{cy + fs*0.34:.1f}" text-anchor="middle" '
+                 f'font-size="{fs:.1f}" font-weight="700" fill="{ink}" '
                  f'font-family="system-ui">{f}</text></g>')
     p.append(f'<g id="ft0" style="display:none">'
-             f'<circle cx="{size*0.5:.0f}" cy="{h*0.62 + pad:.0f}" r="17" fill="none" '
-             f'stroke="{mark}" stroke-width="2.6"/>'
-             f'<text x="{size*0.5:.0f}" y="{h*0.62 + pad + 4:.0f}" text-anchor="middle" '
-             f'font-size="12" font-weight="700" fill="{mark}" '
-             f'font-family="system-ui">개방</text></g>')
+             f'<circle cx="{size*0.5:.0f}" cy="{h*0.62 + pad:.0f}" r="{r*1.6:.0f}" '
+             f'fill="none" stroke="{mark}" stroke-width="2.4"/>'
+             f'<text x="{size*0.5:.0f}" y="{h*0.62 + pad + fs*0.35:.0f}" '
+             f'text-anchor="middle" font-size="{fs:.1f}" font-weight="700" '
+             f'fill="{mark}" font-family="system-ui">개방</text></g>')
+    p.append("</svg></div>")
+    return "".join(p)
+
+
+# ══════════════════════════════════════════════════════════════
+#  브리지 — 어느 줄을 켤지
+# ══════════════════════════════════════════════════════════════
+def bridge_html(inst, w: int = 206, h: int = 58, colors=None,
+                ink="#0d1117") -> str:
+    """브리지 사진 + 「이 줄을 켭니다」 표시.
+
+    지판은 **어디를 짚나**, 브리지는 **어느 줄을 켜나** 를 말합니다.
+    둘은 다른 정보라서, 지판 옆이 아니라 안내 패널에 따로 둡니다.
+    (지판 옆에 두면 정작 짚을 자리가 좁아집니다)
+    """
+    #| 흐름  브리지 사진을 줄 자리에 맞춰 놓고, 줄마다 점을 하나씩 얹는다
+    #| 입력  악기 · 상자 크기
+    #| 단계  사진 속 E현~G현이 상자 안에 꽉 차도록 배율을 정한다
+    #| 단계  상자 폭을 사진 폭에 맞춘다 — 옆에 검은 띠가 남지 않게
+    #| 반복  네 줄마다
+    #| 단계     브리지 위 그 줄 자리에 줄 이름을 단 점 하나 (색은 JS 가 바꿈)
+    #| 출력  HTML 한 조각
+    img = inst.get("body_img", "")
+    s0, s1 = inst.get("body_str", (0.0, 1.0))
+    rows = inst.get("body_str4", (s0, s0, s1, s1))
+    aspect = inst.get("body_aspect", 1.0)
+    names = inst.get("strings", ["E", "A", "D", "G"])
+    colors = colors or {n: "#c9c9c4" for n in names}
+
+    ih = (h - 21) / (s1 - s0)              # 네 줄이 상자에 꽉 차게
+    iw = ih / aspect
+    box = min(w, int(iw))                  # 사진 폭에 상자를 맞춥니다
+    left = (box - iw) / 2
+    top = 10.5 - s0 * ih
+    bx = left + iw * inst.get("body_bridge", 0.55)
+
+    p = [f'<div style="width:{box}px;height:{h}px;margin:0 auto;'
+         f'position:relative;overflow:hidden;border-radius:8px;'
+         f'background:#0d1117">']
+    if img:
+        p.append(f'<img src="{img}" style="position:absolute;'
+                 f'left:{left:.1f}px;top:{top:.1f}px;'
+                 f'width:{iw:.1f}px;height:{ih:.1f}px">')
+    p.append(f'<svg width="{box}" height="{h}" '
+             f'style="position:absolute;left:0;top:0">')
+    #| 반복  줄마다 — 사진 속 그 줄의 세로 자리에
+    for n, fr in zip(names, rows):
+        y = top + fr * ih
+        p.append(f'<g id="bs{n}">'
+                 f'<circle cx="{bx:.1f}" cy="{y:.1f}" r="7.2" '
+                 f'fill="#0d1117" fill-opacity="0.62" stroke="{colors[n]}" '
+                 f'stroke-opacity="0.5" stroke-width="1.4"/>'
+                 f'<text x="{bx:.1f}" y="{y + 3.1:.1f}" text-anchor="middle" '
+                 f'font-size="9" font-weight="700" fill="{colors[n]}" '
+                 f'fill-opacity="0.6" font-family="system-ui">{n}</text></g>')
     p.append("</svg></div>")
     return "".join(p)
