@@ -28,7 +28,7 @@ from theme import C          # 색은 theme.py 한곳에서
 # ── 논리 크기 (가로 폰 기준) ──
 W = 880             # 전체 폭
 H = 364             # 전체 높이 (가로 폰 한 화면)
-PANEL_W = 232       # 오른쪽 「다음 음 안내」 폭
+PANEL_W = 204       # 오른쪽 「다음 음 안내」 폭 — 남는 만큼 악보·지판이 넓어집니다
 BODY_EDGE = 34      # 지판 오른쪽에 남기는 몸통 가장자리
                     # (브리지는 안내 패널로 옮겼습니다 — 지판을 넓게 쓰려고)
 GAPX = 12
@@ -218,7 +218,8 @@ def guide(notes, sig, bpm: int, inst: str = "violin", ready: int = 5) -> str:
     </div>
     <div style="flex:none">{instrument.hand_html(ins, 78)}</div>
    </div>
-   <div class="pt" style="margin:2px 0 3px">어느 줄을 켜나</div>
+   <div class="pt" style="margin:2px 0 3px">켜는 줄 <b id="pstr"
+     style="color:{C['ink']};font-weight:700">—</b></div>
    {bridge_svg}
   </div>
  </div>
@@ -271,7 +272,8 @@ const bodyImg = new Image();
 bodyImg.src = ART.body_img || '';
 const cursor = document.getElementById('cursor');
 const wrap = document.getElementById('wrap'), fitbox = document.getElementById('fit');
-const P = {{ko: pko, fg: pfg, bow: pbow, pos: ppos}};
+const P = {{ko: pko, fg: pfg, bow: pbow, pos: ppos,
+           str: document.getElementById('pstr')}};
 
 // 낙하 레인의 x = 악보 음표의 x.  둘은 같은 식을 씁니다.
 const laneX = i => X0 + STEP * (i + 0.5);
@@ -829,6 +831,7 @@ function panel(i) {{
   const n = NOTES[i];
   P.ko.textContent = n.ko;
   //| 갈래  줄을 넘나드는 악보인가 ? 어느 줄인지도 같이 : 손가락만
+  if (P.str) P.str.textContent = n.str + '현';
   P.fg.textContent = (n.finger === 0 ? '개방현' : n.finger + '번 손가락')
                    + (USED.length > 1 ? ' · ' + n.str + '현' : '');
   P.bow.textContent = (n.bow === 'down' ? '⊓ 다운보우' : '∨ 업보우');

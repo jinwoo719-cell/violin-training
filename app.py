@@ -38,6 +38,12 @@ st.markdown(f"""<style>
      padding-left:0.7rem !important; padding-right:0.7rem !important; }}
    header[data-testid="stHeader"] {{ height:0; min-height:0; }}
    .ph1, .ph2 {{ display:none !important; }}   /* 가이드 아래 줄에 이미 있음 */
+   /* 도움말 버튼만 남기고 제목 줄을 납작하게 — 안 그러면 가이드를 밀어냅니다 */
+   .stColumns {{ gap:0 !important; }}
+   .stPopover button {{ padding:1px 7px !important; font-size:11px !important;
+     min-height:0 !important; }}
+   .stPopover button p {{ font-size:11px !important; }}
+   div[data-testid="stVerticalBlock"] {{ gap:0.2rem !important; }}
    h4 {{ font-size:14px !important; }}
  }}
  section[data-testid="stSidebar"] {{
@@ -285,11 +291,12 @@ if S.screen == "practice":
     #| 갈래  [다시 녹음] 을 눌렀나 ? 위젯을 새로 만들어 이전 녹음을 지운다 : 그대로 둔다
     #| 갈래  분석한 결과가 있나 ? 오른쪽에 점수를 띄운다 : 손 옮기는 자리를 안내한다
     #| 단계  제목 줄 오른쪽에 도움말 — 화면 가운데에 두면 콘텐츠인지 메뉴인지 애매합니다
-    _h1, _h2 = st.columns([4, 1])
+    _h1, _h2 = st.columns([7, 1])
     with _h1:
         head(title, f'{len(notes)}음 · {play_bpm} BPM · 개방현 A 440Hz 기준')
     with _h2:
-        with st.popover("❔ 연습 방법", use_container_width=True):
+        #| 갈래  폰인가 ? 물음표만 (제목이 숨겨져 자리가 없습니다) : 「연습 방법」
+        with st.popover("❔ 도움말", use_container_width=True):
             st.markdown("**① 먼저 들어보기** — 이 악보가 어떻게 들려야 하는지")
             if st.button("🔊 기준 연주 만들기", key="mkref"):
                 S.ref_wav = analyze.reference_wav(notes, play_bpm)
