@@ -278,22 +278,38 @@ def _hoist_styles(svgs):
     return "\n".join(css), out
 
 
-def build_html(items, svgs):
-    """제목 + 그림 → 자립 HTML."""
+def build_html(items, svgs, head=None, group=True):
+    """제목 + 그림 → 자립 HTML.
+
+    arch.py 도 이 함수를 빌려 씁니다. 그래서 머리말과 목차 묶기를
+    바깥에서 바꿀 수 있게 열어 두었습니다.
+    """
     #| 흐름  왼쪽 목차 + 오른쪽 그림들로 한 장짜리 문서를 만든다
+    #| 입력  (제목, 부제, 코드) 목록 · SVG 목록 · (머리말) · (목차를 파일별로 묶을지)
     #| 반복  그림마다 목차 항목과 본문 한 칸
+    #| 갈래  파일별로 묶나 ? 파일 이름을 목차에 끼운다 : 그냥 나열한다
     #| 출력  HTML 문자열
+    H = head or {
+        "title": "바이올린 연습 도우미 — 플로우차트",
+        "nav": "🎻 플로우차트",
+        "sub": "소스의 <code>#|</code> 흐름 주석에서 자동으로 만들었습니다.<br>"
+               "다시 만들기: <code>python3 make_flowchart.py 플로우차트.html</code>",
+        "lead": "파이썬의 <code>#|</code> 주석과 화면 스크립트의 <code>//|</code> "
+                "주석만 읽어 자동으로 만든 그림입니다. 그림을 따로 그리지 않으므로 "
+                "<b>코드와 문서가 어긋날 수 없습니다.</b><br>"
+                "같은 주석에서 기능 목록(<code>기능리스트.xlsx</code>)도 나옵니다.",
+    }
     css, svgs = _hoist_styles(svgs)
     nav, body, last = [], [], None
     for i, ((title, why, _), svg) in enumerate(zip(items, svgs)):
         anchor = f"d{i}"
         mod = title.split(" · ")[0]
         #| 갈래  파일이 바뀌었나 ? 목차에 파일 이름을 끼운다 : 넘어간다
-        if i >= 2 and mod != last:
+        if group and i >= 2 and mod != last:
             nav.append(f'<div class="grp">📄 {html.escape(mod)}</div>')
             last = mod
-        label = title if i < 2 else title.split(" · ", 1)[-1]
-        cls = ' class="big"' if i < 2 else ""
+        label = title if (i < 2 or not group) else title.split(" · ", 1)[-1]
+        cls = ' class="big"' if (i < 2 and group) else ""
         nav.append(f'<a href="#{anchor}"{cls}>{html.escape(label)}</a>')
         body.append(
             f'<section id="{anchor}"><h2>{html.escape(title)}</h2>'
@@ -301,21 +317,15 @@ def build_html(items, svgs):
             f'<div class="box">{svg or "<i>그리지 못했습니다</i>"}</div></section>')
 
     return f"""<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8">
-<title>바이올린 연습 도우미 — 플로우차트</title>
+<title>{H['title']}</title>
 <style>{CSS}</style>
 <style>{css}</style></head><body>
-<nav id="nav"><h1>🎻 플로우차트</h1>
-<p class="sub">소스의 <code>#|</code> 흐름 주석에서 자동으로 만들었습니다.<br>
-다시 만들기: <code>python3 make_flowchart.py 플로우차트.html</code></p>
+<nav id="nav"><h1>{H['nav']}</h1>
+<p class="sub">{H['sub']}</p>
 {''.join(nav)}</nav>
 <main>
-<h1 class="top">바이올린 연습 도우미 — 플로우차트</h1>
-<p class="lead">
-파이썬의 <code>#|</code> 주석과 화면 스크립트의 <code>//|</code> 주석만 읽어
-자동으로 만든 그림입니다. 그림을 따로 그리지 않으므로
-<b>코드와 문서가 어긋날 수 없습니다.</b><br>
-같은 주석에서 기능 목록(<code>기능리스트.xlsx</code>)도 나옵니다.
-</p>
+<h1 class="top">{H['title']}</h1>
+<p class="lead">{H['lead']}</p>
 {''.join(body)}</main></body></html>"""
 
 

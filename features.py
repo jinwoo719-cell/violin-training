@@ -45,6 +45,7 @@ MODULES = {
     "features.py":   ("개발 도구",     "주석 → 기능 목록 (이 파일)"),
     "excel_out.py":  ("개발 도구",     "기능 목록 → 엑셀 (시트 네 장)"),
     "make_flowchart.py": ("개발 도구", "주석 → 플로우차트 HTML (그림으로 구워서)"),
+    "arch.py":       ("개발 도구",   "주석 + import → 아키텍처 (의존·계층·경계)"),
 }
 
 # 아직 안 끝난 것 (함수 이름 → 상태·비고)
@@ -167,8 +168,11 @@ def main():
     #| 갈래  파일 이름을 받았나 ? 엑셀로 쓴다 : 화면에 표로 보여준다
     rows = collect()
     if len(sys.argv) > 1:
+        # 열 이름(COLS)을 **넘겨줍니다.** excel_out 이 features 를 되돌아
+        # import 하면 둘이 서로 물려서 하나만 떼어 낼 수 없게 됩니다.
+        # (arch.py 가 이 순환을 잡아 줘서 고쳤습니다)
         import excel_out
-        excel_out.write(sys.argv[1], rows, MODULES, BACKLOG)
+        excel_out.write(sys.argv[1], rows, MODULES, BACKLOG, COLS)
         print(f"{sys.argv[1]} 에 썼습니다. (기능 {len(rows)}개)")
     else:
         print(as_text(rows))

@@ -86,11 +86,13 @@ def _clef(top, left):
 
 def line(notes, x0, step, top, right, *, sig=("♯", []), left=14,
          badges=None, click=None, show_name=True, show_position=True,
-         show_finger=True, compact=False, mark_ids=False):
+         show_finger=True, compact=False, mark_ids=False, id_base=0):
     """악보 한 줄을 SVG 조각 리스트로 만듭니다.
 
     badges : i → (색, 글자).  결과 리포트에서 음마다 판정을 붙일 때.
     click  : JS 함수 이름.  주면 음표를 눌러 그 부분만 다시 들을 수 있게.
+    id_base: 악보를 여러 장으로 나눠 그릴 때, id 가 겹치지 않게 더하는 값.
+             (같은 화면에 두 장이 있으면 nh0 이 둘이 되어 JS 가 엉뚱한 걸 칠합니다)
     """
     #| 흐름  음 목록 → 오선·조표·음표·슬러·활·마디선·포지션 띠 SVG 조각들
     #| 입력  음 목록 · 가로 배치 · 조표 · (판정 배지 · 클릭 함수)
@@ -183,8 +185,9 @@ def line(notes, x0, step, top, right, *, sig=("♯", []), left=14,
             p.append(glyphs.place(gl, x - 9 - glyphs.width_of(gl, gh), y, gh, INK))
 
         # mark_ids 를 주면 id 가 붙어, 연주 중에 JS 가 그 음만 색을 바꿉니다
-        hid = f' id="nh{i}"' if mark_ids else ''
-        sid = f' id="ns{i}"' if mark_ids else ''
+        gid = i + id_base
+        hid = f' id="nh{gid}"' if mark_ids else ''
+        sid = f' id="ns{gid}"' if mark_ids else ''
         p.append(f'<ellipse{hid} cx="{x:.1f}" cy="{y:.1f}" rx="6.2" ry="4.6" '
                  f'transform="rotate(-20 {x:.1f} {y:.1f})" fill="{INK}"/>')
         if pos >= 4:                       # 가운데 줄보다 높으면 기둥은 아래로
@@ -202,7 +205,7 @@ def line(notes, x0, step, top, right, *, sig=("♯", []), left=14,
                          f'font-size="10.5" font-weight="700" fill="#fff">{txt}</text>')
 
         if show_name:
-            nid = f' id="nk{i}"' if mark_ids else ''
+            nid = f' id="nk{i + id_base}"' if mark_ids else ''
             p.append(f'<text{nid} x="{x:.1f}" y="{name_y:.1f}" text-anchor="middle" '
                      f'font-size="12" font-weight="400" fill="{MUT}">{nt["ko"]}</text>')
         if show_finger:

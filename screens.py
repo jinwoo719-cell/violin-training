@@ -73,31 +73,55 @@ def guide_height(notes=None, sig=None) -> int:
     return H + 8
 
 
-def _score(notes, sig, x0, step):
-    """가이드용 악보 — 배지·손가락줄 없이 얇게."""
-    #| 흐름  악보를 얇게 그리고, 음표 아래로 세로선을 내려 캔버스 레인과 잇는다
-    #| 입력  음 목록 · 조표 · 가로 배치
+# 한 장에 몇 음까지 — 마디선은 4음마다 그으므로 16음 = **4마디**입니다.
+# 긴 악보를 한 줄에 다 밀어 넣으면 음표가 겹쳐 아무것도 안 보입니다
+# (사진에서 읽은 72음짜리 악보가 그랬습니다).
+PER_PAGE = 16
+
+
+def paginate(notes):
+    """음 목록 → 4마디씩 끊은 장 목록."""
+    #| 흐름  긴 악보를 4마디(16음)씩 나눈다
+    #| 갈래  한 장에 다 들어가나 ? 한 장으로 : 16음씩 끊는다
+    #| 갈래  마지막 장이 2음 이하로 남나 ? 앞 장에 붙인다 (한 음짜리 장은 허전합니다)
+    #| 출력  [(시작 번호, 그 장의 음들)]
+    n = len(notes)
+    if n <= PER_PAGE:
+        return [(0, notes)]
+    cuts = list(range(0, n, PER_PAGE))
+    if n - cuts[-1] <= 2 and len(cuts) > 1:
+        cuts.pop()
+    return [(a, notes[a:cuts[k + 1] if k + 1 < len(cuts) else n])
+            for k, a in enumerate(cuts)]
+
+
+def _score(notes, sig, x0, step, base=0, first=True):
+    """가이드용 악보 한 장 — 배지·손가락줄 없이 얇게."""
+    #| 흐름  악보 한 장을 얇게 그리고, 음표 아래로 세로선을 내려 레인과 잇는다
+    #| 입력  그 장의 음들 · 조표 · 가로 배치 · id 시작 번호
     #| 호출  staff.layout → 위 여백 (배지가 없으니 덜 필요)
     #| 호출  staff.line → 악보 조각 (계이름만, 포지션 띠는 얇게)
     #| 반복  음마다
     #| 단계     음표 아래로 옅은 세로선 — 아래 레인과 이어집니다
-    #| 단계  지금 어디인지 알려주는 커서를 얹는다
+    #| 단계  지금 어디인지 알려주는 커서를 얹는다 (장마다 하나씩)
     #| 출력  (SVG, 높이)
     top = staff.layout(notes, with_badges=False)[0]
     parts, bottom = staff.line(notes, x0, step, top,
                                right=x0 + step * len(notes) + 8,
                                sig=sig, show_finger=False, show_position=False,
-                               compact=True, mark_ids=True)
+                               compact=True, mark_ids=True, id_base=base)
     for i in range(len(notes)):
         sx = staff.note_x(i, x0, step)
         parts.append(f'<line x1="{sx:.1f}" y1="{top + staff.GAP*4 + 5:.1f}" '
                      f'x2="{sx:.1f}" y2="{bottom:.1f}" stroke="#ffffff" '
                      f'stroke-width="1" opacity="0.08"/>')
-    parts.append(f'<rect id="cursor" x="{x0:.1f}" y="{top-9}" width="{step:.1f}" '
+    # 커서는 **장마다 하나씩**. SVG 사이로 옮길 수 없어서 각 장이 자기 것을 갖습니다.
+    parts.append(f'<rect class="cur" x="{x0:.1f}" y="{top-9}" width="{step:.1f}" '
                  f'height="{staff.GAP*4+18}" fill="#ffffff" fill-opacity="0.13" '
                  f'stroke="#ffffff" stroke-opacity="0.5" stroke-width="1.4" rx="6"/>')
-    return (f'<svg id="score" viewBox="0 0 {LW} {bottom}" width="{LW}" '
-            f'height="{bottom}" style="display:block">{"".join(parts)}</svg>'), bottom
+    return (f'<svg class="pg" data-pg="{base}" viewBox="0 0 {LW} {bottom}" '
+            f'width="{LW}" height="{bottom}" '
+            f'style="display:{"block" if first else "none"}">{"".join(parts)}</svg>'), bottom
 
 
 def guide(notes, sig, bpm: int, inst: str = "violin", ready: int = 5) -> str:
@@ -113,9 +137,26 @@ def guide(notes, sig, bpm: int, inst: str = "violin", ready: int = 5) -> str:
     ins = instrument.get(inst)
     x0 = max(70, staff.head_width(sig))
     x1 = LW - 22
-    step = (x1 - x0) / len(notes)
+    #| 호출  paginate → 4마디씩 끊은 장들
+    pages = paginate(notes)
+    # 간격은 **가장 긴 장** 기준으로 한 번만 정합니다.
+    # 장마다 따로 정하면 마지막 장만 음표가 늘어져 다른 악보처럼 보입니다.
+    step = (x1 - x0) / max(len(p) for _, p in pages)
 
-    score_svg, score_h = _score(notes, sig, x0, step)
+    #| 반복  장마다 악보 SVG 한 장씩 (첫 장만 보이고 나머지는 숨겨 둡니다)
+    svgs, score_h, page_of, page_x = [], 0, {}, {}
+    for k, (base, part) in enumerate(pages):
+        svg, h = _score(part, sig, x0, step, base=base, first=(k == 0))
+        svgs.append(svg)
+        score_h = max(score_h, h)
+        for j in range(len(part)):
+            page_of[base + j] = k
+            page_x[base + j] = staff.note_x(j, x0, step)
+    score_svg = f'<div id="score">{"".join(svgs)}</div>'
+    # 한 장뿐이면 「악보 1/1」은 자리만 먹습니다
+    page_tag = ('' if len(pages) < 2 else
+                f'<span class="k">악보 <b id="pgnum" '
+                f'style="color:{C["ink"]}">1/{len(pages)}</b></span>')
     cv_h = H - score_h - BAR_H
 
     # 지판에 **이번 연습이 쓰는 만큼만** 보여줍니다.
@@ -137,6 +178,7 @@ def guide(notes, sig, bpm: int, inst: str = "violin", ready: int = 5) -> str:
     data = [{"i": i, "ko": n["ko"], "finger": n["finger"], "bow": n["bow"],
              "mm": n["mm"], "t": n["t"], "dur": n["dur"], "pos": n["position"],
              "str": n["string"], "f": n["freq"],
+             "pg": page_of[i], "x": page_x[i],
              "color": staff.DOWN_COLOR if n["bow"] == "down" else staff.UP_COLOR,
              "slurHead": n["slur_head"]}
             for i, n in enumerate(notes)]
@@ -227,6 +269,7 @@ def guide(notes, sig, bpm: int, inst: str = "violin", ready: int = 5) -> str:
    <button id="go">● 시작 + 녹음</button>
    <button id="dm" title="악보를 소리로 먼저 들려줍니다 (녹음 전에)">🔊 시범 듣기</button>
    <span id="rec" class="k"></span>
+   {page_tag}
    <span class="k">준비
      <select id="rd">
        <option value="0">없음</option><option value="3">3초</option>
@@ -252,6 +295,7 @@ const ART = {json.dumps(art, ensure_ascii=False)};
 const ACTIVE = "{active}", USED = {json.dumps(used)}, VIEW_MM = {view_mm:.1f};
 const LW = {LW}, CV = {cv_h};
 const X0 = {x0}, STEP = {step}, BEAT = {60.0 / bpm};
+const NPAGE = {len(pages)};
 const TOTAL = {len(notes) * 60.0 / bpm};
 // 지판은 네 줄이 들어갈 만큼만 쓰고, 남는 높이는 전부 **노드 레인**에 줍니다.
 // (레인이 길수록 앞의 음이 더 일찍 보입니다)
@@ -270,13 +314,13 @@ const scrollImg = new Image();
 scrollImg.src = ART.scroll_img || '';
 const bodyImg = new Image();
 bodyImg.src = ART.body_img || '';
-const cursor = document.getElementById('cursor');
 const wrap = document.getElementById('wrap'), fitbox = document.getElementById('fit');
 const P = {{ko: pko, fg: pfg, bow: pbow, pos: ppos,
            str: document.getElementById('pstr')}};
 
-// 낙하 레인의 x = 악보 음표의 x.  둘은 같은 식을 씁니다.
-const laneX = i => X0 + STEP * (i + 0.5);
+// 낙하 레인의 x = 악보 음표의 x.  파이썬이 미리 계산해 실어 보냅니다
+// (악보가 여러 장으로 나뉘면 음 번호만으로는 x 를 알 수 없습니다)
+const laneX = i => NOTES[i].x;
 // 지판의 x = 너트에서의 실제 거리
 const boardX = mm => BX0 + (BX1 - BX0) * (mm / VIEW_MM);
 
@@ -492,6 +536,45 @@ rdIn.onchange = () => {{
   READY = +rdIn.value;
   try {{ localStorage.setItem('vc_ready', READY); }} catch (e) {{}}
 }};
+
+// ── 악보 장 넘기기 ──
+//
+//  긴 악보를 한 줄에 다 밀어 넣으면 음표가 겹쳐 아무것도 안 보입니다.
+//  4마디씩 끊어 한 장만 보여주고, 다음 장의 첫 음이 **떨어지기 시작할 때**
+//  미리 넘깁니다. 넘어간 뒤에 노드가 나타나면 준비할 시간이 없습니다.
+const PAGES = [...document.querySelectorAll('#score .pg')];
+const CURS = [...document.querySelectorAll('#score .cur')];
+let curPage = 0;
+let PN = NOTES.filter(n => n.pg === 0);     // 지금 장의 음들
+let cursor = CURS[0];
+
+function showPage(p) {{
+  //| 갈래  이미 그 장인가 ? 아무것도 안 한다 : 그 장만 보이게 하고 지판도 다시 만든다
+  //| 단계  지판·판정 자리·계이름은 **그 장의 음만** — 72음을 다 그리면 지판이 새까매집니다
+  if (p === curPage || p < 0 || p >= PAGES.length) return;
+  PAGES[curPage].style.display = 'none';
+  PAGES[p].style.display = 'block';
+  curPage = p;
+  cursor = CURS[p];
+  PN = NOTES.filter(n => n.pg === p);
+  rebuild();
+  if (PG) PG.textContent = (p + 1) + '/' + PAGES.length;
+}}
+
+function pageAt(t) {{
+  //| 흐름  지금 보여야 할 장 — **레인에 들어온 가장 최근 음**의 장
+  //| 반복  음마다 — 아직 안 떨어진 음을 만나면 멈춘다
+  //| 출력  장 번호
+  let p = 0;
+  for (const n of NOTES) {{
+    if (t < n.t - LEAD_BASE / SPEED) break;   // 배속을 올리면 더 늦게 넘깁니다
+    p = n.pg;
+  }}
+  return p;
+}}
+
+const PG = document.getElementById('pgnum');
+if (PG) PG.textContent = '1/' + PAGES.length;
 
 // ── 아직 시작 전 ──
 // 빈 화면을 두면 "고장났나" 싶습니다. 무엇을 눌러야 하는지 적어 둡니다.
@@ -713,7 +796,7 @@ const NODE_W = 30, NODE_R = 7;      // 판정 자리(리셉터)와 같은 폭·�
 
 function lanes() {{
   // 아래 절반은 지판 자리 그대로 — 노드가 여기로 내려앉습니다
-  NOTES.forEach(n => {{
+  PN.forEach(n => {{
     const x = boardX(n.mm);
     const grd = g.createLinearGradient(0, 0, 0, HIT_Y);
     grd.addColorStop(0, 'rgba(255,255,255,0)');
@@ -727,22 +810,24 @@ function lanes() {{
 // ── 판정 자리(리셉터) — 리듬게임의 그 자리. 여기에 맞추면 됩니다 ──
 // 줄이 달라도 손가락 자리가 같으면 x 가 겹칩니다 (실제로 같은 자리니까요).
 // 겹친 것을 여러 번 그리면 꺼진 것이 켜진 것을 덮으므로, 자리별로 묶어 한 번만 그립니다.
-const SPOTS = (() => {{
+let SPOTS = [];
+function makeSpots() {{
   const m = new Map();
-  NOTES.forEach(n => {{
+  PN.forEach(n => {{
     const k = Math.round(n.mm * 2);
     if (!m.has(k)) m.set(k, {{mm: n.mm, list: []}});
     m.get(k).list.push(n);
   }});
   return [...m.values()];
-}})();
+}}
 
 // ── 계이름 라벨 — 줄마다 하나씩, 너무 붙으면 앞의 것만 ──
 const SCOL = {{}};
 STRINGS.forEach(s => SCOL[s.name] = s.color);
-const LABELS = (() => {{
+let LABELS = [];
+function makeLabels() {{
   const by = {{}}, out = [];
-  NOTES.forEach(n => (by[n.str] = by[n.str] || []).push(n));
+  PN.forEach(n => (by[n.str] = by[n.str] || []).push(n));
   for (const s in by) {{
     let lastX = -999;
     //| 반복  그 줄의 음을 지판 순서로
@@ -755,7 +840,11 @@ const LABELS = (() => {{
     }}
   }}
   return out;
-}})();
+}}
+
+//| 흐름  장이 바뀔 때마다 판정 자리와 계이름을 그 장 것으로 다시 만든다
+function rebuild() {{ SPOTS = makeSpots(); LABELS = makeLabels(); }}
+rebuild();
 
 function receptors(t) {{
   SPOTS.forEach(sp => {{
@@ -852,6 +941,7 @@ function draw() {{
   //| 갈래  아직 시작 전인가 ? 지판만 그리고 안내를 띄운다 : 계속 그린다
   if (t0 === null) {{
     g.fillStyle = '{C['bg']}'; g.fillRect(0, 0, LW, CV);
+    showPage(0);
     lanes(); board(); receptors(-99); idle(); panel(0); markScore(-1);
     requestAnimationFrame(draw);
     return;
@@ -859,6 +949,8 @@ function draw() {{
   let t = (performance.now() - t0) / 1000;
   //| 갈래  끝까지 갔나 ? 멈춘다 (다시 ▶ 를 눌러야 시작) : 계속
   if (t > TOTAL + 0.9) {{ stop(); requestAnimationFrame(draw); return; }}
+  //| 단계  지금 보여야 할 악보 장으로 넘긴다
+  showPage(pageAt(t));
   g.fillStyle = '{C['bg']}'; g.fillRect(0, 0, LW, CV);
   lanes();
   const PPS = HIT_Y * SPEED / LEAD_BASE;      // 배속만큼 빨리 내려옵니다
@@ -876,12 +968,14 @@ function draw() {{
   }}
 
   const idx = Math.max(0, Math.min(NOTES.length - 1, Math.floor(t / BEAT)));
-  cursor.setAttribute('x', (X0 + STEP * idx).toFixed(1));
+  //| 단계  커서는 **그 장 안에서의 자리**로 — 음 번호 그대로 쓰면 장을 넘는 순간 튑니다
+  if (cursor) cursor.setAttribute('x', (NOTES[idx].x - STEP / 2).toFixed(1));
   markScore(idx);
   panel(idx);
 
   // 떨어지는 노드 — 지판 자리에서 곧게. 판정 자리와 같은 폭·모서리입니다.
-  NOTES.forEach(n => {{
+  // **지금 장의 음만** 그립니다. 다른 장 음은 x 가 그 장 기준이라 엉뚱한 데 떨어집니다.
+  PN.forEach(n => {{
     const yB = HIT_Y - (n.t - t) * PPS;
     const h = Math.max(n.dur * PPS - 5, 10), yT = yB - h;
     if (yB < -14 || yT > HIT_Y + 8) return;
@@ -921,7 +1015,7 @@ function draw() {{
   receptors(t);
 
   // 판정선에 닿은 음 → 지판의 실제 자리로 이어 줍니다 (그 음이 쓰는 줄 위에)
-  NOTES.forEach(n => {{
+  PN.forEach(n => {{
     if (t < n.t - 0.1 || t > n.t + n.dur) return;
     const y = ROW[n.str] || ROW[ACTIVE], bx2 = boardX(n.mm);
     const fresh = Math.max(0, 1 - Math.abs(t - n.t) / 0.3);

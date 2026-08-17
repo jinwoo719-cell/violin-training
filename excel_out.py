@@ -189,19 +189,18 @@ def sheet_backlog(wb, backlog):
     return ws
 
 
-def write(path, rows, modules, backlog):
+def write(path, rows, modules, backlog, cols):
     """엑셀 한 권을 씁니다."""
     #| 흐름  빈 책을 만들어 시트 네 장을 채우고 저장한다
-    #| 입력  저장 경로 · 기능 목록 · 모듈 표 · 다음 단계
+    #| 입력  저장 경로 · 기능 목록 · 모듈 표 · 다음 단계 · 열 이름
     #| 호출  sheet_features → 기능목록
     #| 호출  sheet_modules → 모듈
     #| 호출  sheet_backlog → 다음단계
     #| 호출  sheet_overview → 개요 (수식이 앞 시트들을 가리킵니다)
     #| 출력  .xlsx 파일
-    from features import COLS
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
-    sheet_features(wb, rows, COLS)
+    sheet_features(wb, rows, cols)
     sheet_modules(wb, modules, len(rows))
     sheet_backlog(wb, backlog)
     sheet_overview(wb, len(rows), len(modules))
