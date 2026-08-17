@@ -12,7 +12,11 @@
 둘 다 악보의 가로 좌표를 staff.note_x() 에서 가져옵니다 — 따로 계산하면 어긋납니다.
 """
 
+import hashlib
 import json
+import os
+
+import streamlit.components.v1 as components
 
 import instrument
 import music
@@ -35,6 +39,24 @@ LEAD = 1.35         # 몇 초 앞의 음까지 보여줄지
 ROW_GAP = 18        # 지판에서 줄 사이 간격 (계이름이 들어갈 자리까지)
 
 STRING_COLOR = {"E": "#f6e9b8", "A": "#f0d98c", "D": "#cbb06a", "G": "#a98c4e"}
+
+
+_GUIDE = components.declare_component(
+    "violin_guide", path=os.path.join(os.path.dirname(__file__), "guide_component"))
+
+
+def guide_component(html: str, height: int, key: str = "guide"):
+    """가이드를 띄우고, **녹음한 소리를 되돌려 받습니다.**
+
+    돌려주는 것: {"wav": base64 WAV, "sec": 길이, "id": 녹음 번호} 또는 None.
+    같은 녹음이 여러 번 올라오므로, 쓰는 쪽에서 id 로 걸러야 합니다.
+    """
+    #| 흐름  가이드를 띄우고 녹음을 받아 온다
+    #| 입력  가이드 HTML · 높이
+    #| 단계  내용이 바뀌었는지 알 수 있게 표식(sig)을 붙인다 — 같으면 다시 안 그립니다
+    #| 출력  녹음 {wav, sec, id} 또는 None
+    sig = hashlib.md5(html.encode()).hexdigest()[:12]
+    return _GUIDE(html=html, height=height, sig=sig, key=key, default=None)
 
 
 def guide_height(notes=None, sig=None) -> int:
@@ -191,8 +213,9 @@ def guide(notes, sig, bpm: int, inst: str = "violin", ready: int = 5) -> str:
   </div>
  </div>
  <div id="bar">
-   <button id="go">▶ 시작</button>
+   <button id="go">● 시작 + 녹음</button>
    <button id="dm" title="악보를 소리로 먼저 들려줍니다 (녹음 전에)">🔊 시범 듣기</button>
+   <span id="rec" class="k"></span>
    <span class="k">준비
      <select id="rd">
        <option value="0">없음</option><option value="3">3초</option>
@@ -253,6 +276,8 @@ function fit() {{
   wrap.style.transform = `scale(${{s}})`;
   wrap.style.marginLeft = Math.max(0, (w - {W} * s) / 2) + 'px';
   fitbox.style.height = ({H} * s) + 'px';
+  //| 단계  바깥(스트림릿)에도 높이를 알린다 — 안 그러면 아래가 잘립니다
+  if (parent !== window) parent.postMessage({{violinHeight: Math.ceil({H} * s) + 10}}, '*');
 }}
 addEventListener('resize', fit); fit();
 
@@ -288,10 +313,11 @@ function start(ready) {{
 }}
 
 function stop() {{
-  //| 흐름  멈춘다. 다시 ▶ 를 눌러야 시작합니다.
+  //| 흐름  멈춘다. 녹음도 같이 끝내고 위로 올려보냅니다.
   t0 = null;
   marked = -2; shown = -2;
-  goBtn.textContent = '▶ 시작';
+  goBtn.textContent = '● 시작 + 녹음';
+  recStop();
 }}
 
 // ── 메트로놈 — 짧은 클릭. 첫 박만 높게 (어디가 1박인지 알게) ──
@@ -348,9 +374,94 @@ function tone(n) {{
   o.start(t1); o.stop(t1 + d + 0.03);
 }}
 
-const goBtn = document.getElementById('go');
-//| 갈래  이미 돌고 있나 ? 멈춘다 : 준비 시간부터 시작한다
-goBtn.onclick = () => {{ audio(); if (t0 === null) start(READY); else stop(); }};
+// ══════════════════════════════════════════════
+//  녹음 — 시작 버튼 하나에 묶습니다
+//
+//  왜 묶나: 녹음과 가이드가 따로면 사용자가 순서를 지켜야 하고,
+//  순서가 틀어지면 박자가 어긋나 분석이 통째로 무의미해집니다.
+//  같은 클릭에서 시작하면 어긋날 수가 없습니다.
+// ══════════════════════════════════════════════
+const goBtn = document.getElementById('go'), recTag = document.getElementById('rec');
+let mr = null, chunks = [], recOn = false;
+
+function recMsg(t, color) {{
+  recTag.textContent = t;
+  recTag.style.color = color || '{C['muted']}';
+}}
+
+function toWav(buf) {{
+  //| 흐름  브라우저 소리 → WAV (파이썬 쪽을 안 고치려고 여기서 만듭니다)
+  //| 입력  디코딩된 소리
+  //| 반복  표본마다 16비트 정수로
+  //| 출력  base64 WAV
+  const n = buf.length, sr = buf.sampleRate, d = buf.getChannelData(0);
+  const ab = new ArrayBuffer(44 + n * 2), v = new DataView(ab);
+  const w = (o, t) => {{ for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); }};
+  w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVEfmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true);
+  v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  w(36, 'data'); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) {{
+    let x = Math.max(-1, Math.min(1, d[i]));
+    v.setInt16(44 + i * 2, x < 0 ? x * 32768 : x * 32767, true);
+  }}
+  let b = '', u = new Uint8Array(ab);
+  for (let i = 0; i < u.length; i += 8192) {{
+    b += String.fromCharCode.apply(null, u.subarray(i, i + 8192));
+  }}
+  return btoa(b);
+}}
+
+function up(msg) {{
+  //| 갈래  스트림릿 안인가 ? 위로 올려보낸다 : (혼자 열린 파일이면) 아무것도 안 한다
+  if (parent !== window) parent.postMessage(msg, '*');
+}}
+
+async function recStart() {{
+  //| 흐름  마이크를 잡고 녹음을 건다
+  //| 갈래  마이크가 열리나 ? 녹음을 시작한다 : 알리고 녹음 없이 진행한다
+  if (recOn) return true;
+  try {{
+    const stream = await navigator.mediaDevices.getUserMedia({{audio: {{
+      echoCancellation: false, noiseSuppression: false, autoGainControl: false
+    }}}});
+    chunks = []; mr = new MediaRecorder(stream);
+    mr.ondataavailable = e => chunks.push(e.data);
+    mr.onstop = async () => {{
+      stream.getTracks().forEach(t => t.stop());
+      recOn = false;
+      try {{
+        const ac = new (window.AudioContext || window.webkitAudioContext)();
+        const buf = await ac.decodeAudioData(await new Blob(chunks).arrayBuffer());
+        //| 갈래  너무 짧나 ? 버린다 : 위로 올려보낸다
+        if (buf.duration < 0.5) {{ recMsg('너무 짧아 버렸습니다'); return; }}
+        recMsg('✓ 녹음 ' + buf.duration.toFixed(1) + '초', '{C['good']}');
+        up({{violin: {{wav: toWav(buf), sec: buf.duration, id: Date.now()}}}});
+      }} catch (e) {{ recMsg('소리를 읽지 못했습니다'); }}
+    }};
+    mr.start(); recOn = true;
+    recMsg('● 녹음 중', '{C['bad']}');
+    return true;
+  }} catch (e) {{
+    recMsg('마이크 없이 진행합니다 (' + e.name + ')');
+    return false;
+  }}
+}}
+
+function recStop() {{
+  //| 갈래  녹음 중인가 ? 멈추고 내려보낸다 : 그냥 둔다
+  if (recOn && mr && mr.state !== 'inactive') mr.stop();
+}}
+
+//| 갈래  이미 돌고 있나 ? 멈춘다 : 마이크를 잡고 준비 시간부터 시작한다
+goBtn.onclick = async () => {{
+  audio();
+  if (t0 !== null) {{ stop(); return; }}
+  recMsg('마이크 여는 중…');
+  await recStart();
+  start(READY);
+}};
 rdIn.onchange = () => {{
   READY = +rdIn.value;
   try {{ localStorage.setItem('vc_ready', READY); }} catch (e) {{}}
@@ -362,7 +473,7 @@ rdIn.onchange = () => {{
 function idle() {{
   g.save(); g.textAlign = 'center';
   g.fillStyle = '{C['ink']}'; g.font = '700 15px system-ui';
-  g.fillText('① 아래에서 녹음을 시작하고  ②  ▶ 시작  을 누르세요',
+  g.fillText('●  시작 + 녹음  을 누르면 녹음과 가이드가 함께 시작됩니다',
              LW / 2, HIT_Y / 2 - 4);
   g.fillStyle = '{C['muted']}'; g.font = '12.5px system-ui';
   g.fillText('준비 시간 뒤 메트로놈 네 박을 세고 시작합니다', LW / 2, HIT_Y / 2 + 18);

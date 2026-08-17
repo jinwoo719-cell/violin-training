@@ -7,6 +7,8 @@
 실행:  streamlit run app.py
 """
 
+import base64
+
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -99,6 +101,9 @@ S.setdefault("gem_key", "")          # 사진 인식용 키 (기억만 하고 �
 S.setdefault("my_demo", None)        # 「내 악보」 시범 연주
 S.setdefault("ref_wav", None)        # 「연습하기」 시범 연주
 S.setdefault("coached", False)       # 한 번이라도 분석해 봤나 (안내를 접을지)
+S.setdefault("rec_wav", None)        # 가이드가 되돌려 준 녹음
+S.setdefault("rec_sec", 0)
+S.setdefault("last_rec", None)       # 같은 녹음을 두 번 받지 않으려고
 
 #| 입력  고른 연습 — 음계 · 범위 · 슬러 · BPM · 허용 범위
 
@@ -276,8 +281,16 @@ if S.screen == "practice":
             S.drill = None
             st.rerun()
 
-    components.html(screens.guide(notes, sig, play_bpm),
-                    height=screens.guide_height(), scrolling=False)
+    #| 호출  screens.guide_component → 가이드를 띄우고 **녹음을 되돌려 받는다**
+    got = screens.guide_component(screens.guide(notes, sig, play_bpm),
+                                  screens.guide_height(), key="guide")
+    #| 갈래  새 녹음이 올라왔나 ? 받아 둔다 (같은 것이 여러 번 오므로 번호로 거릅니다) : 넘어간다
+    if isinstance(got, dict) and got.get("wav") and got.get("id") != S.last_rec:
+        S.last_rec = got["id"]
+        S.rec_wav = base64.b64decode(got["wav"])
+        S.rec_sec = got.get("sec", 0)
+        S.result = None            # 새로 연주했으니 지난 결과는 지웁니다
+        st.rerun()
 
     st.markdown("")
     left, right = st.columns([1.15, 1])
@@ -305,28 +318,40 @@ if S.screen == "practice":
                        "가이드 바의 **[🔊 시범 듣기]** 를 켜세요.")
 
         if not S.coached:
-            st.info("**①** 아래 마이크로 녹음 시작 → **②** 가이드의 **[▶ 시작]** → "
-                    "**③** 연주 → **④** [분석하기]")
+            st.info("**[● 시작 + 녹음]** 하나만 누르면 됩니다 — "
+                    "마이크·메트로놈·가이드가 **함께** 시작합니다.")
+
+        #| 갈래  녹음이 있나 ? 들려주고 분석할지 묻는다 : 시작 버튼을 가리킨다
+        if S.rec_wav:
+            st.audio(S.rec_wav, format="audio/wav")
+            st.caption(f"방금 연주 · {S.rec_sec:.1f}초")
+            g1, g2 = st.columns([1.4, 1])
+            if g1.button("분석하기", type="primary", use_container_width=True):
+                with st.spinner("음정을 찾는 중…"):
+                    run_analysis(S.rec_wav)
+            if g2.button("지우기", use_container_width=True):
+                S.rec_wav = None
+                S.result = None
+                st.rerun()
+            st.caption("분석은 원할 때만 하세요. 여러 번 연주해 보고 "
+                       "마음에 드는 것 하나만 분석해도 됩니다 — "
+                       "다시 [● 시작 + 녹음] 을 누르면 이 녹음은 새것으로 바뀝니다.")
         else:
-            st.caption("① 마이크 → ② 가이드 [▶ 시작] → ③ 연주 → ④ 분석하기")
-
-        rec = st.audio_input("마이크", key=f"rec{S.take}", label_visibility="collapsed")
-
-        b1, b2 = st.columns([1.4, 1])
-        if b1.button("분석하기", type="primary", use_container_width=True,
-                     disabled=rec is None):
-            with st.spinner("음정을 찾는 중…"):
-                run_analysis(rec.getvalue())
-        if b2.button("다시 녹음", use_container_width=True, disabled=rec is None):
-            S.take += 1                 # 위젯을 새로 만들어 이전 녹음을 지웁니다
-            st.rerun()
-
-        #| 갈래  녹음도 결과도 없나 ? 마이크 없이 볼 수 있는 길을 작게 둔다 : 숨긴다
-        if rec is None and not S.result:
-            if st.button("마이크가 없으신가요? — 데모로 보기", use_container_width=True,
-                         help="합성 연주로 전체 흐름을 확인합니다"):
-                with st.spinner("데모 연주를 만드는 중…"):
-                    run_analysis(analyze.demo_wav(notes, play_bpm))
+            st.caption("위 가이드의 **[● 시작 + 녹음]** 을 누르면 여기에 녹음이 담깁니다.")
+            #| 갈래  마이크가 안 열리나 ? 파일로 올릴 길을 둔다 : 접어 둔다
+            with st.expander("마이크가 안 열리나요?"):
+                st.caption("브라우저가 마이크를 막으면 가이드 바에 이유가 뜹니다. "
+                           "주소창의 자물쇠에서 마이크를 허용해 주세요. "
+                           "그래도 안 되면 아래로 직접 녹음할 수 있습니다.")
+                alt = st.audio_input("직접 녹음", key=f"rec{S.take}",
+                                     label_visibility="collapsed")
+                if alt is not None and st.button("이 녹음으로 분석하기",
+                                                 use_container_width=True):
+                    with st.spinner("음정을 찾는 중…"):
+                        run_analysis(alt.getvalue())
+                if st.button("마이크 없이 데모로 보기", use_container_width=True):
+                    with st.spinner("데모 연주를 만드는 중…"):
+                        run_analysis(analyze.demo_wav(notes, play_bpm))
 
     with right:
         #| 갈래  분석한 결과가 있나 ? 점수부터 보여준다 : 손 옮기는 자리를 안내한다

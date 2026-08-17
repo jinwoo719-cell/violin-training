@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>violin guide</title>
+<!--
+  가이드를 감싸는 껍데기.
+
+  왜 이게 필요한가:
+    st.components.v1.html 은 **한쪽으로만** 말합니다 (파이썬 → 화면).
+    그래서 화면 안에서 녹음한 소리를 파이썬으로 되돌릴 길이 없었고,
+    그 때문에 "녹음 버튼"과 "시작 버튼"이 따로 놀았습니다.
+
+    커스텀 컴포넌트로 바꾸면 되돌릴 길이 생깁니다. 이 파일이 그 길입니다.
+      · 스트림릿에게  "나 준비됐다"           → componentReady
+      · 스트림릿에게서 가이드 HTML 을 받아     → streamlit:render
+      · 안쪽 iframe 에 띄우고                  → srcdoc
+      · 안쪽에서 올라온 WAV 를 파이썬으로      → setComponentValue
+
+    안쪽을 iframe 으로 한 번 더 감싸는 이유는, 가이드 HTML 을 **그대로**
+    쓰기 위해서입니다. 그래야 데모_*.html 처럼 혼자 열어도 똑같이 돕니다.
+    allow="microphone" 으로 마이크 권한을 안쪽까지 넘겨줍니다.
+-->
+<style>
+  html,body { margin:0; padding:0; background:#0d1117; overflow:hidden; }
+  iframe { display:block; border:0; width:100%; }
+</style></head>
+<body>
+<iframe id="g" allow="microphone" height="400"></iframe>
+<script>
+// 스트림릿에게 말 걸기
+const say = (m) => parent.postMessage(Object.assign({isStreamlitMessage: true}, m), "*");
+say({type: "streamlit:componentReady", apiVersion: 1});
+
+const box = document.getElementById('g');
+let drawn = null;                 // 지금 그려 놓은 가이드의 표식
+
+function setH(h) {
+  box.style.height = h + 'px';
+  say({type: "streamlit:setFrameHeight", height: h});
+}
+
+addEventListener("message", (e) => {
+  const d = e.data || {};
+
+  // ① 파이썬이 보낸 가이드
+  if (d.type === "streamlit:render") {
+    const a = d.args || {};
+    // 같은 내용이면 다시 그리지 않습니다 —
+    // 다시 그리면 돌던 연주와 녹음이 그 자리에서 끊깁니다.
+    if (a.sig && a.sig === drawn) return;
+    drawn = a.sig;
+    setH(a.height || 400);
+    box.srcdoc = a.html || '';
+    return;
+  }
+
+  // ② 안쪽 가이드가 알려준 높이
+  if (d.violinHeight) { setH(d.violinHeight); return; }
+
+  // ③ 안쪽 가이드가 올려보낸 녹음 → 파이썬으로
+  if (d.violin) { say({type: "streamlit:setComponentValue", value: d.violin, dataType: "json"}); }
+});
+</script>
+</body></html>

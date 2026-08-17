@@ -175,7 +175,7 @@ def pick_strings(freqs, forced=None):
 #  3. 음 목록 만들기  ← music._build 와 같은 모양을 돌려줍니다
 # ══════════════════════════════════════════════════════════════
 def build(parsed, key: int = 0, bpm: int = 60, slur: int = 1,
-          forced_string=None, position: str = "1 → 3포지션"):
+          forced_string=None, position: str = "1포지션"):
     """적은 음들 → 화면 세 개가 그대로 쓰는 음 목록.
 
     music.build_notes 와 **같은 열쇠(key)** 를 담습니다.
