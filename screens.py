@@ -41,8 +41,16 @@ ROW_GAP = 18        # 지판에서 줄 사이 간격 (계이름이 들어갈 자
 STRING_COLOR = {"E": "#f6e9b8", "A": "#f0d98c", "D": "#cbb06a", "G": "#a98c4e"}
 
 
-_GUIDE = components.declare_component(
-    "violin_guide", path=os.path.join(os.path.dirname(__file__), "guide_component"))
+_GUIDE_DIR = os.path.join(os.path.dirname(__file__), "guide_component")
+if not os.path.isfile(os.path.join(_GUIDE_DIR, "index.html")):
+    # 배포할 때 이 폴더를 빠뜨리면 여기서 멈춥니다.
+    # 안 그러면 "왜 녹음이 안 되지" 하고 한참 헤매게 됩니다.
+    raise FileNotFoundError(
+        "guide_component/index.html 이 없습니다. "
+        "이 폴더를 통째로 함께 올려야 [● 시작 + 녹음] 이 됩니다. "
+        f"(찾은 자리: {_GUIDE_DIR})")
+
+_GUIDE = components.declare_component("violin_guide", path=_GUIDE_DIR)
 
 
 def guide_component(html: str, height: int, key: str = "guide"):
