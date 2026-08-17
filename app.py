@@ -492,15 +492,11 @@ elif S.screen == "sheet":
                "**내가 적은 것**과 **내가 가진 악보를 내가 찍은 것**만 다룹니다. "
                "사진은 저장하지 않고, 읽고 나면 바로 버립니다.")
 
-    t1, t2, t3 = st.tabs(["✍️ 직접 적기", "📷 사진에서", "📄 파일에서"])
+    #| 입력  악보를 넣는 세 갈래 — **손으로 적는 것은 맨 뒤**입니다.
+#|       음을 하나씩 타이핑할 사람은 거의 없습니다. 사진이 먼저입니다.
+    t1, t2, t3 = st.tabs(["📷 사진에서", "📄 파일에서", "✍️ 직접 적기"])
 
     with t1:
-        st.markdown(sheet.HELP)
-        if st.button("보기 채우기 (A장조 한 옥타브)"):
-            S.my_text = sheet.SAMPLE
-            st.rerun()
-
-    with t2:
         #| 갈래  사진에서 — 키가 있어야 인식이 됩니다
         st.markdown("가지고 있는 악보를 **밝은 곳에서 반듯하게** 한 줄씩 찍으세요.")
         st.caption("사진은 인식할 때 한 번만 쓰고 곧바로 버립니다 — "
@@ -511,7 +507,28 @@ elif S.screen == "sheet":
         S.gem_key = st.text_input("Gemini API 키", S.gem_key, type="password",
                                   help="키는 이 브라우저 세션에만 있고 저장하지 않습니다. "
                                        "aistudio.google.com 에서 무료로 발급됩니다.")
-        if st.button("사진에서 읽기", type="primary", disabled=shot is None):
+        #| 갈래  키를 확인해 보고 싶나 ? 쓸 수 있는 모델을 물어봐 보여준다 : 넘어간다
+        k1, k2 = st.columns([1.6, 1])
+        go = k1.button("사진에서 읽기", type="primary", disabled=shot is None,
+                       use_container_width=True)
+        if k2.button("키 확인", use_container_width=True,
+                     disabled=not S.gem_key.strip(),
+                     help="이 키로 쓸 수 있는 모델을 물어봅니다. "
+                          "사진 없이도 키가 살아 있는지 알 수 있습니다."):
+            with st.spinner("물어보는 중…"):
+                try:
+                    ms = sheet.list_models(S.gem_key.strip())
+                    if ms:
+                        st.success(f"키가 살아 있습니다 — 쓸 수 있는 모델 {len(ms)}개. "
+                                   f"먼저 쓸 것: **{ms[0]}**")
+                        st.caption(" · ".join(ms[:12]))
+                    else:
+                        st.warning("키는 통했는데 쓸 수 있는 모델이 없습니다.")
+                except Exception as e:
+                    code = getattr(e, "code", None)
+                    st.error(sheet._why(code) if code else f"닿지 못했습니다 — {e}")
+
+        if go:
             with st.spinner("악보를 읽는 중…"):
                 try:
                     got = sheet.from_image(shot.getvalue(), S.gem_key.strip(),
@@ -524,7 +541,7 @@ elif S.screen == "sheet":
                 except Exception as e:
                     st.error(str(e))
 
-    with t3:
+    with t2:
         st.markdown("MuseScore 등에서 내보낸 **MusicXML**(.musicxml / .xml / .mxl) "
                     "을 올리면 음을 뽑아 옵니다.")
         up = st.file_uploader("MusicXML", type=["musicxml", "xml", "mxl"],
@@ -596,6 +613,12 @@ elif S.screen == "sheet":
                 S.take += 1
                 st.rerun()
 
+
+    with t3:
+        st.markdown(sheet.HELP)
+        if st.button("보기 채우기 (A장조 한 옥타브)"):
+            S.my_text = sheet.SAMPLE
+            st.rerun()
 
 # ══════════════════════════════════════════════════════════════
 #  설정

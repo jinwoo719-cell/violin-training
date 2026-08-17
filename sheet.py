@@ -372,8 +372,91 @@ PROMPT = """이 사진은 바이올린 연습용 악보입니다.
 형식
 {"notes":[{"step":"A","alter":0,"octave":4,"beats":1.0}, ...]}"""
 
-ENDPOINT = ("https://generativelanguage.googleapis.com/v1beta/models/"
-            "gemini-2.0-flash:generateContent?key=")
+API = "https://generativelanguage.googleapis.com/v1beta"
+
+# 구글은 모델을 자주 갈아치웁니다. 이름을 하나 박아 두면 몇 달 뒤 404 가 납니다.
+# (이 앱도 gemini-2.0-flash 로 굳어 있다가 그렇게 죽었습니다)
+#
+# 그래서 두 단계로 갑니다.
+#   ① 아는 이름부터 차례로 시도한다
+#   ② 다 404 면 **API 에게 뭘 쓸 수 있는지 물어본다** (ListModels)
+# 이러면 다음에 또 이름이 바뀌어도 앱이 알아서 살아납니다.
+# 3.6 Flash 가 악보 사진을 가장 잘 읽었습니다 (직접 써 보고 정했습니다).
+# 뒤의 것들은 그것이 막혔을 때를 위한 대비입니다.
+PREFERRED = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-flash-latest",
+             "gemini-3.6-flash-lite", "gemini-3.5-flash-lite",
+             "gemini-flash-lite-latest"]
+
+_FOUND = {}          # 한 번 찾은 모델은 기억해 둡니다 (키마다)
+
+
+def _call(url: str, api_key: str, body=None, timeout: int = 60):
+    """구글에 한 번 요청.
+
+    키를 주소(?key=)가 아니라 **헤더**로 보냅니다.
+    새로 나온 `AQ.` 로 시작하는 키는 주소에 실으면 거절당하는 일이 있습니다.
+    """
+    #| 흐름  키를 헤더에 싣고 한 번 요청한다
+    #| 갈래  보낼 몸통이 있나 ? POST : GET
+    #| 출력  받은 JSON
+    hdr = {"x-goog-api-key": api_key.strip()}
+    data = None
+    if body is not None:
+        hdr["Content-Type"] = "application/json"
+        data = json.dumps(body).encode()
+    req = urllib.request.Request(url, data=data, headers=hdr)
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read().decode())
+
+
+def list_models(api_key: str):
+    """이 키로 쓸 수 있는 모델 이름들 — 사진을 넣을 수 있는 것만."""
+    #| 흐름  이 키가 쓸 수 있는 모델을 물어본다
+    #| 호출  _call → 모델 목록
+    #| 반복  모델마다 — generateContent 를 지원하나
+    #| 출력  이름 목록 (flash·lite 가 앞에 오게)
+    got = _call(f"{API}/models", api_key, timeout=20)
+    names = [m["name"].split("/")[-1] for m in got.get("models", [])
+             if "generateContent" in m.get("supportedGenerationMethods", [])]
+
+    def rank(n):
+        #| 갈래  악보를 잘 읽는 것부터 — flash → flash-lite → 나머지
+        #|       (lite 는 싸지만 흐릿한 악보에서 자주 틀립니다)
+        return (0 if ("flash" in n and "lite" not in n) else
+                1 if "flash" in n else 2,
+                0 if "latest" in n else 1, n)
+    return sorted(names, key=rank)
+
+
+def _models_to_try(api_key: str):
+    """시도할 모델 순서 — 기억해 둔 것 → 아는 이름 → 물어본 것."""
+    #| 흐름  어떤 모델을 어떤 차례로 시도할지 정한다
+    #| 갈래  전에 성공한 것이 있나 ? 그것부터 : 아는 이름부터
+    #| 갈래  아는 이름이 다 막혔나 ? API 에 물어본다 : 넘어간다
+    #| 출력  모델 이름 목록
+    seen, out = set(), []
+    for n in [_FOUND.get(api_key)] + PREFERRED:
+        if n and n not in seen:
+            seen.add(n); out.append(n)
+    try:
+        for n in list_models(api_key):
+            if n not in seen:
+                seen.add(n); out.append(n)
+    except Exception:
+        pass                       # 못 물어봐도 아는 이름으로는 계속 시도합니다
+    return out
+
+
+def _why(code: int) -> str:
+    """HTTP 숫자를 사람 말로. 404 를 '키를 확인하라'고 하면 엉뚱한 데를 뒤집니다."""
+    #| 갈래  숫자가 무엇인가 ? 그에 맞는 설명 : 일반적인 설명
+    return {
+        400: "요청이 거절됐습니다 — 키 형식이 맞는지 확인해 주세요.",
+        401: "키가 인증되지 않았습니다 — 새 키를 만들어 넣어 주세요.",
+        403: "키에 권한이 없습니다 — Google AI Studio 에서 키를 새로 만들어 주세요.",
+        404: "쓸 수 있는 모델을 찾지 못했습니다 — 키는 맞는데 모델 이름이 막혔습니다.",
+        429: "오늘 쓸 수 있는 양을 다 썼습니다 — 잠시 뒤 다시 해 주세요.",
+    }.get(code, f"인식 서비스가 거절했습니다 ({code}).")
 
 
 def from_image(image_bytes: bytes, api_key: str, mime: str = "image/jpeg",
@@ -383,10 +466,14 @@ def from_image(image_bytes: bytes, api_key: str, mime: str = "image/jpeg",
     인식은 **반드시 틀립니다.** 그래서 결과를 곧바로 쓰지 않고
     글로 돌려주어 사용자가 고치게 합니다.
     """
-    #| 흐름  사진을 한 번 보내 음 목록을 받고, 사진은 버린다
+    #| 흐름  사진을 보내 음 목록을 받고, 사진은 버린다
     #| 입력  사진 바이트 · API 키
     #| 갈래  키가 없나 ? 어떻게 넣는지 알린다 : 계속한다
-    #| 단계  사진을 base64 로 실어 한 번만 보낸다 (저장하지 않습니다)
+    #| 단계  사진을 base64 로 실어 싣는다 (저장하지 않습니다)
+    #| 호출  _models_to_try → 시도할 모델 차례
+    #| 반복  모델마다
+    #| 갈래     404 인가 ? 다음 모델로 (이름이 바뀐 것뿐입니다) : 여기서 멈춘다
+    #| 갈래  다 막혔나 ? 무엇이 문제인지 숫자로 구분해 알린다 : 계속한다
     #| 갈래  대답이 JSON 인가 ? 음 목록으로 바꾼다 : 무슨 말이 왔는지 알린다
     #| 출력  음 목록  (실패하면 이유를 담은 예외)
     import base64
@@ -401,18 +488,33 @@ def from_image(image_bytes: bytes, api_key: str, mime: str = "image/jpeg",
         ]}],
         "generationConfig": {"temperature": 0, "response_mime_type": "application/json"},
     }
-    req = urllib.request.Request(
-        ENDPOINT + api_key, data=json.dumps(body).encode(),
-        headers={"Content-Type": "application/json"})
+    raw, last, tried = None, None, []
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            raw = json.loads(r.read().decode())
-    except urllib.error.HTTPError as e:
-        raise ValueError(f"인식 서비스가 거절했습니다 ({e.code}). 키를 확인해 주세요.")
-    except Exception as e:
-        raise ValueError(f"인식 서비스에 닿지 못했습니다 — {e}")
+        for name in _models_to_try(api_key):
+            tried.append(name)
+            try:
+                raw = _call(f"{API}/models/{name}:generateContent",
+                            api_key, body, timeout)
+                _FOUND[api_key] = name          # 다음부터는 이걸 먼저 씁니다
+                break
+            except urllib.error.HTTPError as e:
+                last = e.code
+                #| 갈래  모델이 없는 것뿐인가 ? 다음 이름으로 : 더 해 봐야 소용없다
+                if e.code not in (404, 400):
+                    break
+            except Exception as e:
+                last = str(e)
+                break
     finally:
         image_bytes = None                      # 여기서 사진을 놓습니다
+
+    if raw is None:
+        if isinstance(last, int):
+            hint = _why(last)
+            if last == 404 and tried:
+                hint += f"  (시도한 모델: {', '.join(tried[:4])}…)"
+            raise ValueError(hint)
+        raise ValueError(f"인식 서비스에 닿지 못했습니다 — {last}")
 
     try:
         txt = raw["candidates"][0]["content"]["parts"][0]["text"]
