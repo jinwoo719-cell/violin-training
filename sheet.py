@@ -134,6 +134,13 @@ def _semi_on(freq: float, string) -> float:
     return 12 * math.log2(freq / string["freq"])
 
 
+def names_fallback(f):
+    """어느 포지션으로도 안 닿을 때 — 그냥 닿는 줄 아무거나."""
+    #| 갈래  닿는 줄이 있나 ? 그 줄 : 가장 낮은 줄
+    ok = [s for s in music.STRINGS if -0.3 <= _semi_on(f, s) <= MAX_SEMI + 0.3]
+    return (ok[0] if ok else music.STRINGS[-1])["name"]
+
+
 def pick_strings(freqs, forced=None):
     """음마다 어느 줄로 켤지.
 
@@ -167,14 +174,15 @@ def pick_strings(freqs, forced=None):
 # ══════════════════════════════════════════════════════════════
 #  3. 음 목록 만들기  ← music._build 와 같은 모양을 돌려줍니다
 # ══════════════════════════════════════════════════════════════
-def build(parsed, key: int = 0, bpm: int = 60, slur: int = 1, forced_string=None):
+def build(parsed, key: int = 0, bpm: int = 60, slur: int = 1,
+          forced_string=None, position: str = "1 → 3포지션"):
     """적은 음들 → 화면 세 개가 그대로 쓰는 음 목록.
 
     music.build_notes 와 **같은 열쇠(key)** 를 담습니다.
     그래야 가이드·악보·리포트·분석이 하나도 안 바뀌고 돌아갑니다.
     """
     #| 흐름  적은 음들을 지판자리·손가락·활까지 붙은 음 목록으로
-    #| 입력  뜯어 놓은 음들 · 조표 · BPM · 슬러 · (못박은 줄)
+    #| 입력  뜯어 놓은 음들 · 조표 · BPM · 슬러 · (못박은 줄) · 포지션
     #| 단계  음마다 주파수를 낸다
     #| 호출  pick_strings → 음마다 어느 줄
     #| 반복  같은 줄이 이어지는 덩어리마다
@@ -189,7 +197,16 @@ def build(parsed, key: int = 0, bpm: int = 60, slur: int = 1, forced_string=None
 
     freqs = [music.A4_HZ * 2 ** ((music.LETTER_SEMI[l] + a + 12 * (o + 1) - 69) / 12)
              for l, a, o, _ in parsed]
-    names = pick_strings(freqs, forced_string)
+    force = {"1포지션": 1, "3포지션": 3}.get(position)
+    #| 갈래  포지션을 못박았나 ? 그 포지션에서 닿는 줄로 (손은 그대로, 활만 옮김) : 편한 줄로
+    if force and not forced_string:
+        reach = music.CROSS_REACH[force]
+        base = next((s["name"] for s in music.STRINGS
+                     if reach[0] - 0.3 <= music.semi_on(freqs[0], s) <= reach[1] + 0.3),
+                    names_fallback(freqs[0]))
+        names = music.pick_strings(freqs, base, reach, open_ok=(force == 1))
+    else:
+        names = pick_strings(freqs, forced_string)
 
     # 같은 줄이 이어지는 덩어리 안에서만 포지션을 정합니다
     place = [None] * len(parsed)
@@ -200,7 +217,7 @@ def build(parsed, key: int = 0, bpm: int = 60, slur: int = 1, forced_string=None
             j += 1
         st = music.STRING_BY_NAME[names[i]]
         semis = [max(0, int(round(_semi_on(freqs[k], st)))) for k in range(i, j)]
-        for k, pf in zip(range(i, j), music.assign_positions(semis)):
+        for k, pf in zip(range(i, j), music.assign_positions(semis, force)):
             place[k] = pf
         i = j
 

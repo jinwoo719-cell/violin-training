@@ -50,8 +50,12 @@ KINDS = {                       # 종류: (텍스트 기호, Mermaid 도형 괄�
     "흐름": ("»", "", ""),
 }
 
-TAG = re.compile(r"^(\s*)#\|\s*(입력|단계|갈래|반복|호출|출력|구역|흐름)\s+(.*?)\s*$")
+# 주석은 파이썬(#|)과 자바스크립트(//|) 둘 다 읽습니다.
+# 화면 ①의 움직임은 JS 안에 있어서, JS 를 안 읽으면 순서도에 구멍이 납니다.
+TAG = re.compile(r"^(\s*)(?:#|//)\|\s*(입력|단계|갈래|반복|호출|출력|구역|흐름)\s+(.*?)\s*$")
 DEF = re.compile(r"^(\s*)(?:async\s+)?def\s+(\w+)")
+JS_DEF = re.compile(r"^\s*(?:function\s+(\w+)\s*\(|(?:const|let|var)\s+(\w+)\s*=\s*"
+                    r"(?:\([^)]*\)|\w+)\s*=>)")
 
 
 def scan(path):
@@ -62,19 +66,27 @@ def scan(path):
     marks = ('"' * 3, "'" * 3)
     for raw in open(path, encoding="utf-8").read().splitlines():
         #| 갈래  설명글 안인가 ? 통째로 건너뛴다 : 계속 읽는다
-        # 규약을 적어 둔 설명글까지 순서도로 뽑히면 안 됩니다
+        # 규약을 적어 둔 설명글까지 순서도로 뽑히면 안 됩니다.
+        # 다만 `return f"""..."""` 같은 **문자열 안의 JS** 는 읽어야 합니다.
+        # 그래서 줄이 따옴표로 **시작할 때만** 설명글로 봅니다.
         if quote:
             if quote in raw:
                 quote = None
             continue
+        head = raw.lstrip().lstrip("rfbu")
         opened = next((q for q in marks if raw.count(q) == 1), None)
-        if opened:
+        if opened and head.startswith(opened):
             quote = opened
             continue
         #| 갈래  def 줄인가 ? 지금 함수를 바꾼다 : 그대로 둔다
         d = DEF.match(raw)
         if d:
             func, func_indent = d.group(2), len(d.group(1))
+            continue
+        #| 갈래  JS 함수 줄인가 ? 그 이름으로 바꾼다 (문자열 안의 화면 로직) : 넘어간다
+        j = JS_DEF.match(raw)
+        if j:
+            func = (j.group(1) or j.group(2)) + " (JS)"
             continue
         #| 갈래  #| 주석인가 ? 뽑아 담는다 : 넘어간다
         m = TAG.match(raw)

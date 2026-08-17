@@ -191,7 +191,7 @@ def guide(notes, sig, bpm: int, inst: str = "violin", ready: int = 5) -> str:
   </div>
  </div>
  <div id="bar">
-   <button id="go">▶ 처음부터</button>
+   <button id="go">▶ 시작</button>
    <button id="dm" title="악보를 소리로 먼저 들려줍니다 (녹음 전에)">🔊 시범 듣기</button>
    <span class="k">준비
      <select id="rd">
@@ -275,13 +275,23 @@ try {{
 rdIn.value = READY;
 if (rdIn.selectedIndex < 0) rdIn.value = 5;  // 저장된 값이 목록에 없으면
 
-let t0 = 0, clicked = -1, played = -1;
+// t0 가 null 이면 **아직 시작 전**입니다. 저절로 시작하지 않습니다 —
+// 녹음 버튼을 먼저 누르고 ▶ 를 눌러야 박자가 녹음과 맞습니다.
+let t0 = null, clicked = -1, played = -1;
 function start(ready) {{
   //| 흐름  지금부터 (준비 + 카운트인) 뒤에 첫 음이 오도록 시각을 맞춘다
   t0 = performance.now() + (ready + COUNT * BEAT) * 1000;
   clicked = -1;                              // 메트로놈을 처음부터 다시
   played = -1;                               // 시범 연주도 처음부터
   marked = -2; shown = -2;
+  goBtn.textContent = '■ 멈춤';
+}}
+
+function stop() {{
+  //| 흐름  멈춘다. 다시 ▶ 를 눌러야 시작합니다.
+  t0 = null;
+  marked = -2; shown = -2;
+  goBtn.textContent = '▶ 시작';
 }}
 
 // ── 메트로놈 — 짧은 클릭. 첫 박만 높게 (어디가 1박인지 알게) ──
@@ -338,12 +348,26 @@ function tone(n) {{
   o.start(t1); o.stop(t1 + d + 0.03);
 }}
 
-document.getElementById('go').onclick = () => {{ audio(); start(READY); }};
+const goBtn = document.getElementById('go');
+//| 갈래  이미 돌고 있나 ? 멈춘다 : 준비 시간부터 시작한다
+goBtn.onclick = () => {{ audio(); if (t0 === null) start(READY); else stop(); }};
 rdIn.onchange = () => {{
   READY = +rdIn.value;
   try {{ localStorage.setItem('vc_ready', READY); }} catch (e) {{}}
-  audio(); start(READY);
 }};
+
+// ── 아직 시작 전 ──
+// 빈 화면을 두면 "고장났나" 싶습니다. 무엇을 눌러야 하는지 적어 둡니다.
+//| 흐름  시작 전에는 무엇을 눌러야 하는지 알려준다
+function idle() {{
+  g.save(); g.textAlign = 'center';
+  g.fillStyle = '{C['ink']}'; g.font = '700 15px system-ui';
+  g.fillText('① 아래에서 녹음을 시작하고  ②  ▶ 시작  을 누르세요',
+             LW / 2, HIT_Y / 2 - 4);
+  g.fillStyle = '{C['muted']}'; g.font = '12.5px system-ui';
+  g.fillText('준비 시간 뒤 메트로놈 네 박을 세고 시작합니다', LW / 2, HIT_Y / 2 + 18);
+  g.restore();
+}}
 
 // ── 준비·카운트인 표시 ──
 // 지판 왼쪽(스크롤 위쪽)은 노드가 지나가지 않는 자리라 여기에 그립니다.
@@ -683,9 +707,16 @@ function panel(i) {{
 }}
 
 function draw() {{
+  //| 갈래  아직 시작 전인가 ? 지판만 그리고 안내를 띄운다 : 계속 그린다
+  if (t0 === null) {{
+    g.fillStyle = '{C['bg']}'; g.fillRect(0, 0, LW, CV);
+    lanes(); board(); receptors(-99); idle(); panel(0); markScore(-1);
+    requestAnimationFrame(draw);
+    return;
+  }}
   let t = (performance.now() - t0) / 1000;
-  //| 갈래  끝까지 갔나 ? 다시 처음부터 (두 번째부터는 준비 없이 카운트인만) : 계속
-  if (t > TOTAL + 0.9) {{ start(0); t = (performance.now() - t0) / 1000; }}
+  //| 갈래  끝까지 갔나 ? 멈춘다 (다시 ▶ 를 눌러야 시작) : 계속
+  if (t > TOTAL + 0.9) {{ stop(); requestAnimationFrame(draw); return; }}
   g.fillStyle = '{C['bg']}'; g.fillRect(0, 0, LW, CV);
   lanes();
   const PPS = HIT_Y * SPEED / LEAD_BASE;      // 배속만큼 빨리 내려옵니다
@@ -766,6 +797,6 @@ function draw() {{
 
   requestAnimationFrame(draw);
 }}
-start(READY);
+stop();          // 저절로 시작하지 않습니다 — ▶ 를 눌러야 시작
 draw();
 </script></body></html>"""

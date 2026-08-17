@@ -94,7 +94,86 @@ FINGER_1ST = {0: 0, 1: 1, 2: 1, 3: 2, 4: 2, 5: 3, 6: 3, 7: 4, 8: 4}
 FINGER_3RD = {5: 1, 6: 1, 7: 2, 8: 2, 9: 3, 10: 3, 11: 4, 12: 4}
 
 
-def assign_positions(semis):
+POSITIONS = ["1 → 3포지션", "1포지션", "3포지션"]
+
+# 그 포지션에서 짚을 수 있는 범위 (개방현에서 몇 반음 위까지)
+REACH = {1: (0, 8), 3: (5, 12)}
+
+
+def semi_on(freq, string):
+    """그 줄에서 개방현으로부터 몇 반음 위인지."""
+    return 12 * math.log2(freq / string["freq"])
+
+
+# 줄을 넘어갈지 정할 때 쓰는 사정거리.  REACH 보다 좁습니다 —
+# 4번 손가락으로 두 음을 잇달아 짚게 두느니 옆 줄로 넘어가는 편이 낫기 때문입니다.
+CROSS_REACH = {1: (0, 7), 3: (5, 11)}
+
+
+def pick_strings(freqs, base, reach, open_ok=True):
+    """음마다 어느 줄로 켤지 — **손을 옮기지 않고** 닿게.
+
+    1포지션에서 한 옥타브 음계를 하려면 도중에 옆 줄로 넘어가야 합니다
+    (A현 1포지션은 레까지, 그 위는 E현으로). 손은 그대로 두고 활만 옮깁니다.
+    """
+    #| 흐름  줄을 최대한 지키다가, 안 닿으면 옆 줄로 넘어간다
+    #| 입력  음들의 주파수 · 시작 줄 · 그 포지션의 사정거리
+    #| 반복  음마다
+    #| 갈래     지금 줄로 닿나 ? 그대로 : 닿는 줄 중 가장 낮은 자리로 옮긴다
+    #| 출력  음마다 줄 이름
+    lo, hi = reach
+
+    def ok(f, st):
+        #| 갈래  개방현인가 ? 1포지션에서는 쓴다 (3포지션 연습에서는 안 씁니다) : 사정거리 안인지 본다
+        v = semi_on(f, st)
+        if abs(v) < 0.3:
+            return open_ok
+        return lo - 0.3 <= v <= hi + 0.3
+
+    cur = STRING_BY_NAME[base]
+    out = []
+    for f in freqs:
+        if not ok(f, cur):
+            cur = next((s for s in STRINGS if ok(f, s)), cur)
+        out.append(cur["name"])
+    return out
+
+
+def playable(pattern, base, force):
+    """고른 포지션에서 **손을 옮기지 않고 닿는 음**만 남깁니다.
+
+    네 줄을 다 봐서, 어느 줄로도 안 닿는 음은 뺍니다.
+    E현 1포지션처럼 위로 더 갈 줄이 없으면 음계가 짧아집니다 — 그게 맞습니다.
+    (안 닿는 음을 그려 놓고 짚으라고 하면 연습이 안 됩니다)
+    """
+    #| 흐름  네 줄 중 어디로도 안 닿는 음은 뺀다
+    #| 입력  반음 목록 · 시작 줄 · 못박은 포지션
+    #| 갈래  포지션을 안 박았나 ? 음계 그대로 : 계속한다
+    #| 반복  음마다
+    #| 갈래     어느 줄로든 닿나 ? 남긴다 : 뺀다
+    #| 갈래  남은 게 없나 ? 원래 음계를 돌려준다 : 남은 것만
+    #| 출력  반음 목록
+    if force not in (1, 3):
+        return list(pattern)
+    lo, hi = CROSS_REACH[force]
+    f0 = STRING_BY_NAME[base]["freq"]
+
+    def any_ok(sm):
+        for st in STRINGS:
+            v = semi_on(f0 * 2 ** (sm / 12), st)
+            if abs(v) < 0.3:
+                if force == 1:
+                    return True
+                continue
+            if lo - 0.3 <= v <= hi + 0.3:
+                return True
+        return False
+
+    out = [s for s in pattern if any_ok(s)]
+    return out or list(pattern)
+
+
+def assign_positions(semis, force=None):
     """음계 전체를 보고 **어디서 손을 옮길지** 정합니다.
 
     한 음씩 따로 보면 안 됩니다. 손은 한 번 옮기면 계속 그 자리에 있으니까요.
@@ -106,11 +185,17 @@ def assign_positions(semis):
     """
     #| 흐름  음계 전체를 보고 손을 옮길 자리를 한 번에 정한다
     #| 입력  개방현에서 몇 반음 위인지의 목록
+    #| 갈래  포지션을 못박았나 ? 전부 그 포지션으로 : 어디서 옮길지 정한다
     #| 갈래  1포지션으로 끝까지 닿나 ? 안 옮긴다 : 옮길 자리를 찾는다
     #| 단계  3포지션 1번 손가락 자리(+5반음)를 옮기는 지점으로 잡는다
     #| 반복  음마다
         #| 단계     옮기는 지점 앞이면 1포지션, 뒤면 3포지션 손가락표를 쓴다
     #| 출력  음마다 (포지션, 손가락)
+    # 포지션을 못박은 경우 — 개방현은 어느 포지션에서든 개방현입니다
+    if force in (1, 3):
+        table = FINGER_1ST if force == 1 else FINGER_3RD
+        return [(1, 0) if s == 0 else (force, table.get(s, 4)) for s in semis]
+
     if max(semis) <= 8:                       # 1포지션으로 충분
         return [(1, FINGER_1ST[s]) for s in semis]
 
@@ -159,7 +244,7 @@ def key_signature(root_letter: str, mode: str):
 #  5. 음 목록 만들기  ← 화면 세 개가 전부 이 결과를 씁니다
 # ══════════════════════════════════════════════════════════════
 def notes_from(string_name: str, pattern, mode: str, slur: int = 1, bpm: int = 60,
-               place=None):
+               place=None, force=None):
     """반음 목록 → 연주할 수 있는 음 목록.
 
     음계든 교정 드릴이든 결국 '반음 목록'입니다.
@@ -169,11 +254,11 @@ def notes_from(string_name: str, pattern, mode: str, slur: int = 1, bpm: int = 6
     (교정 드릴은 원래 음계에서 짚던 자리를 그대로 연습해야 뜻이 있습니다)
     """
     #| 흐름  반음 목록을 음이름·지판자리·손가락·활이 다 붙은 음 목록으로
-    return _build(string_name, list(pattern), mode, slur, bpm, place)
+    return _build(string_name, list(pattern), mode, slur, bpm, place, force)
 
 
 def build_notes(string_name: str, mode: str, slur: int = 1, bpm: int = 60,
-                first_position_only: bool = False):
+                position: str = "1 → 3포지션"):
     """음계 하나를 '연주할 수 있는 음 목록'으로 바꿉니다.
 
     음 하나에 들어가는 것:
@@ -182,8 +267,8 @@ def build_notes(string_name: str, mode: str, slur: int = 1, bpm: int = 60,
       bow/slur     활을 어느 쪽으로      t/dur            언제 몇 초
     """
     #| 흐름  음계 하나를 화면 세 개가 그대로 쓸 수 있는 음 목록으로 만든다
-    #| 입력  줄 · 음계 · 슬러 · BPM · 1포지션만 여부
-    #| 갈래  1포지션만인가 ? 7반음까지 자른다 : 한 옥타브 그대로 둔다
+    #| 입력  줄 · 음계 · 슬러 · BPM · 포지션
+    #| 호출  playable → 그 포지션에서 닿는 음만
     #| 호출  key_signature → 조표
     #| 호출  assign_positions → 음마다 (포지션, 손가락)
     #| 반복  음계의 음마다
@@ -194,19 +279,32 @@ def build_notes(string_name: str, mode: str, slur: int = 1, bpm: int = 60,
     #| 반복  다시 음마다 — 활과 슬러
         #| 단계     슬러 하나 = 활 한 번. 그룹마다 다운↔업을 바꾼다
     #| 출력  음 목록 (화면 ①·② 와 분석이 전부 이걸 씀)
-    pattern = SCALES[mode]
-    if first_position_only:
-        pattern = [s for s in pattern if s <= 7]      # 1포지션에서 편하게 닿는 데까지
-    return _build(string_name, list(pattern), mode, slur, bpm)
+    force = {"1포지션": 1, "3포지션": 3}.get(position)
+    #| 갈래  포지션을 못박았나 ? 한 옥타브 그대로 두고 줄을 넘나든다 : 한 줄에서 손을 옮긴다
+    if force:
+        return _build(string_name, playable(SCALES[mode], string_name, force),
+                      mode, slur, bpm, force=force, cross=True)
+    return _build(string_name, list(SCALES[mode]), mode, slur, bpm)
 
 
-def _build(string_name, pattern, mode, slur, bpm, place=None):
+def _build(string_name, pattern, mode, slur, bpm, place=None, force=None,
+           cross=False):
     st = STRING_BY_NAME[string_name]
     sig, sig_notes = key_signature(st["letter"], mode)
     beat = 60.0 / bpm
 
     root_li = LETTERS.index(st["letter"])
-    place = place or assign_positions(pattern)
+    # 반음은 **시작 줄 기준**입니다. 줄을 넘어가면 그 줄 기준으로 다시 셉니다.
+    freqs = [st["freq"] * 2 ** (sm / 12) for sm in pattern]
+    #| 갈래  줄을 넘나드나 ? 음마다 닿는 줄을 고른다 : 전부 시작 줄
+    if cross:
+        names = pick_strings(freqs, string_name, CROSS_REACH[force],
+                             open_ok=(force == 1))
+    else:
+        names = [string_name] * len(pattern)
+    own = [int(round(semi_on(f, STRING_BY_NAME[n])))
+           for f, n in zip(freqs, names)]
+    place = place or assign_positions(own, force)
 
     # 반음 → 음계에서 몇 번째 음인지.
     # 음계는 0,1,2… 순서지만 교정 드릴은 [0,9,0,9] 처럼 뒤죽박죽입니다.
@@ -232,16 +330,17 @@ def _build(string_name, pattern, mode, slur, bpm, place=None):
                                              ("♭" if delta < 0 else "♮"))
 
         pos, finger = place[pos_in_list]
-        freq = st["freq"] * 2 ** (semi / 12)
+        freq = freqs[pos_in_list]
+        on = STRING_BY_NAME[names[pos_in_list]]
 
         notes.append({
             "letter": letter, "octave": octave, "acc": acc,
             "name": letter + ("#" if delta > 0 else "b" if delta < 0 else "") + str(octave),
             "ko": KO_NAME[letter] + ("♯" if delta > 0 else "♭" if delta < 0 else ""),
-            "semi": semi, "freq": freq,
-            "mm": mm_from_freq(freq, st["freq"]),
+            "semi": own[pos_in_list], "freq": freq,
+            "mm": mm_from_freq(freq, on["freq"]),
             "position": pos, "finger": finger,
-            "string": string_name,
+            "string": on["name"],
             "t": pos_in_list * beat, "dur": beat, "beat": pos_in_list,
         })
 

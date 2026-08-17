@@ -84,7 +84,7 @@ S.setdefault("meta", None)           # 그때의 연습 이름
 S.setdefault("when", "")             # 그때의 시각
 S.setdefault("take", 0)              # 녹음 회차 — 위젯을 새로 만들 때 씁니다
 S.setdefault("practice", 0)          # 고른 음계
-S.setdefault("first_only", False)
+S.setdefault("pos", music.POSITIONS[0])   # 포지션 (1 / 3 / 1→3)
 S.setdefault("slur", "한 음씩 (데타셰)")
 S.setdefault("bpm", 60)
 S.setdefault("tol_cent", 12)
@@ -131,8 +131,12 @@ with st.sidebar:
         S.practice = st.selectbox("음계", range(len(music.PRACTICES)),
                                   index=S.practice,
                                   format_func=lambda i: music.PRACTICES[i][0])
-        S.first_only = st.selectbox("범위", ["1 → 3포지션", "1포지션만"],
-                                    index=1 if S.first_only else 0) == "1포지션만"
+    #| 입력  포지션 — 손을 어디에 두고 연주할지 (음계·내 악보 둘 다에 걸립니다)
+    S.pos = st.selectbox(
+        "포지션", music.POSITIONS, index=music.POSITIONS.index(S.pos),
+        help="1포지션·3포지션을 고르면 손을 옮기지 않습니다. "
+             "그 자리에서 안 닿는 음은 옆 줄로 넘어가고, "
+             "그래도 안 닿으면 음계가 짧아집니다.")
     S.slur = st.selectbox("활 나누기", list(music.SLURS.keys()),
                           index=list(music.SLURS).index(S.slur))
     S.bpm = st.slider("BPM", 40, 120, S.bpm, step=5)
@@ -145,12 +149,13 @@ if S.my:
     #| 호출  sheet.build → 내가 적은 악보의 음 목록
     base_notes = sheet.build(S.my["parsed"], S.my["key"], S.bpm,
                              music.SLURS[S.slur],
-                             None if S.my["string"] == "자동" else S.my["string"])
+                             None if S.my["string"] == "자동" else S.my["string"],
+                             position=S.pos)
     sig = sheet.key_of(S.my["key"])
     base_title = S.my["name"]
 else:
     base_notes = music.build_notes(string_name, mode, slur=music.SLURS[S.slur],
-                                   bpm=S.bpm, first_position_only=S.first_only)
+                                   bpm=S.bpm, position=S.pos)
     #| 호출  music.build_notes → 이 연습의 음 목록 (모든 화면이 이걸 씀)
     sig = music.key_signature(music.STRING_BY_NAME[string_name]["letter"], mode)
     #| 호출  music.key_signature → 조표
@@ -165,6 +170,7 @@ with st.sidebar:
     st.markdown(
         f'<div class="sbox"><div class="t">현재 설정</div>'
         f'<div class="r"><span>악보</span><b>{base_title[:14]}</b></div>'
+        f'<div class="r"><span>음</span><b>{len(base_notes)}음</b></div>'
         f'<div class="r"><span>현</span><b>{_used}현</b></div>'
         f'<div class="r"><span>포지션</span><b>{_pos}포지션</b></div>'
         f'<div class="r"><span>템포</span><b>{S.bpm} BPM</b></div>'
@@ -199,7 +205,8 @@ def make_drill(spec):
             return (sheet.build(seg, S.my["key"], 30, 4, st_),
                     "활 롱톤 · 한 활에 네 음", 30)
         return (sheet.build(p, S.my["key"], slow, music.SLURS[S.slur],
-                            None if S.my["string"] == "자동" else S.my["string"]),
+                            None if S.my["string"] == "자동" else S.my["string"],
+                            position=S.pos),
                 f'{S.my["name"]} · 느리게', slow)
 
     if k == "note":                                # ── 음계 연습 ──
@@ -210,8 +217,8 @@ def make_drill(spec):
         return music.drill_shift(base_notes, mode, slow), "시프팅 구간 연습", slow
     if k == "longtone":
         return music.drill_longtone(string_name, mode, 30), "활 롱톤 · 한 활에 네 음", 30
-    return (music.build_notes(string_name, mode, slur=music.SLURS[S.slur], bpm=slow,
-                              first_position_only=S.first_only),
+    return (music.build_notes(string_name, mode, slur=music.SLURS[S.slur],
+                              bpm=slow, position=S.pos),
             f'{music.PRACTICES[S.practice][0]} · 느리게', slow)
 
 
@@ -260,7 +267,7 @@ if S.screen == "practice":
     #| 갈래  [분석하기] 를 눌렀나 ? run_analysis(녹음) : 계속 기다린다
     #| 갈래  [데모로 보기] 를 눌렀나 ? run_analysis(합성 연주) : 계속 기다린다
     #| 갈래  [다시 녹음] 을 눌렀나 ? 위젯을 새로 만들어 이전 녹음을 지운다 : 그대로 둔다
-    #| 단계  오른쪽에 이번 연습의 음·포지션·손가락 표를 보여준다
+    #| 단계  오른쪽에 악보를 바꾸는 길과 손 옮기는 자리 안내를 둔다
     head(title, f'{len(notes)}음 · {play_bpm} BPM · 개방현 A 440Hz 기준')
 
     #| 갈래  교정 연습 중인가 ? 원래 음계로 돌아가는 버튼을 둔다 : 넘어간다
@@ -278,7 +285,8 @@ if S.screen == "practice":
     with left:
         st.markdown("#### 녹음하기")
         st.caption(
-            "① 마이크 버튼으로 녹음을 시작하고 ② 가이드의 **[▶ 처음부터]** 를 누르세요. "
+            "① 마이크 버튼으로 녹음을 시작하고 ② 가이드의 **[▶ 시작]** 을 누르세요. "
+            "가이드는 저절로 시작하지 않습니다 — 녹음과 박자를 맞추기 위해서입니다. "
             "준비 시간이 지난 뒤 **똑 · 똑 · 똑 · 똑** 네 박을 세고 시작합니다 "
             "(준비 시간은 가이드 아래 **[준비]** 에서 바꿉니다). "
             "메트로놈 '똑' 소리는 분석에서 걸러내므로 섞여도 괜찮습니다 — "
@@ -310,23 +318,27 @@ if S.screen == "practice":
             st.rerun()
 
     with right:
-        st.markdown("#### 이번 연습")
-        st.dataframe(
-            [{"": i + 1, "계이름": n["ko"], "포지션": f'{n["position"]}포지션',
-              "손가락": "개방" if n["finger"] == 0 else f'{n["finger"]}번',
-              "너트에서": f'{n["mm"]:.1f}mm', "Hz": f'{n["freq"]:.1f}',
-              "활": "⊓ 다운" if n["bow"] == "down" else "∨ 업"}
-             for i, n in enumerate(notes)],
-            hide_index=True, use_container_width=True, height=318)
+        #| 단계  악보를 바꾸는 길을 눈에 띄게 — 메뉴 안에만 두면 못 찾습니다
+        st.markdown("#### 악보 바꾸기")
+        st.caption("음계 말고 **내 악보**로도 연습할 수 있습니다. "
+                   "직접 적거나 · 가지고 있는 악보를 찍거나 · MusicXML 을 올리세요. "
+                   "사진은 저장하지 않습니다.")
+        if st.button("📄 내 악보 만들기 (적기 · 사진 · 파일)", type="primary",
+                     use_container_width=True):
+            S.screen = "sheet"
+            st.rerun()
+        st.caption("음계·포지션·활·템포는 **왼쪽 사이드바(≫)** 에서 바꿉니다.")
 
         sh = music.shift_index(notes)
+        #| 갈래  손을 옮기는 자리가 있나 ? 어디서 어떻게 옮기는지 : 안 옮긴다고 알린다
         if sh is not None:
             st.info(f'**{notes[sh]["ko"]}**에서 {notes[sh-1]["position"]}→'
                     f'{notes[sh]["position"]}포지션으로 손을 옮깁니다. '
                     f'직전 음 **{notes[sh-1]["ko"]}**를 짚어 소리로 확인한 뒤 '
                     f'올라가면 자리를 잡기 쉽습니다.')
         else:
-            st.info("이 연습은 손을 옮기지 않고 1포지션에서 끝납니다.")
+            _p = sorted({n["position"] for n in notes})
+            st.info(f'손을 옮기지 않습니다 — **{_p[0]}포지션**에서 끝납니다.')
 
 
 # ══════════════════════════════════════════════════════════════
