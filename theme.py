@@ -37,7 +37,7 @@ C = {
     "muted": "#9ba4b0",
 
     # ── 강조 ──
-    "accent":    "#d6a85f",   # 버튼 · 켜진 메뉴
+    "accent":    "#cfa15a",   # 버튼 · 켜진 메뉴 (조금 낮춘 골드)
     "on_accent": "#141a22",   # 골드 **위에** 얹는 글자 — 흰 글자는 안 읽힙니다
 
     # ── 판정 ──
@@ -57,7 +57,7 @@ C = {
     # ── 그 밖 ──
     "trace": "#f0d98c",    # 내 음정 궤적 (A현 색)
     "pos1":  "#72b889",    # 1포지션
-    "pos3":  "#d6a85f",    # 3포지션
+    "pos3":  "#cfa15a",    # 3포지션
 }
 
 FONT = "system-ui,-apple-system,'Malgun Gothic',sans-serif"

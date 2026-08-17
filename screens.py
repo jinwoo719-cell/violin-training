@@ -694,11 +694,12 @@ function board() {{
   const hg = g.createLinearGradient(0, HIT_Y - 16, 0, HIT_Y);
   hg.addColorStop(0, 'rgba(255,45,69,0)'); hg.addColorStop(1, 'rgba(255,45,69,0.18)');
   g.fillStyle = hg; g.fillRect(BX0 + 1, HIT_Y - 16, LW, 16);
-  // 판정선 — 예전엔 새빨간 형광이라 화면에서 제일 먼저 눈에 띄었습니다.
-  // 짚는 **순간**을 알리는 선이지 오류 표시가 아니므로 순하게 낮췄습니다.
-  // (금색으로 해 봤더니 줄 색에 묻혀 사라져서 산호색으로 갑니다)
-  g.shadowColor = '#e0736e'; g.shadowBlur = 6;
-  g.strokeStyle = '#e0736e'; g.lineWidth = 1.9;
+  // 판정선 — 짚는 **순간**을 알리는 선이지 오류 표시가 아닙니다.
+  // 빨강이었을 때는 화면에서 제일 먼저 눈에 띄어 "뭐가 잘못됐나" 싶었고,
+  // 금색으로 바꿔 봤더니 줄 색(#f0d98c)에 묻혀 아예 사라졌습니다.
+  // 회색-파랑은 나무·황동 계열과 안 겹치면서 오류로도 안 읽힙니다.
+  g.shadowColor = '#8fa6b8'; g.shadowBlur = 5;
+  g.strokeStyle = '#8fa6b8'; g.lineWidth = 1.7;
   g.beginPath(); g.moveTo(BX0 + 1, HIT_Y); g.lineTo(LW, HIT_Y); g.stroke();
   g.restore();
 }}

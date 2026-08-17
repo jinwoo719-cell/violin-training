@@ -76,6 +76,11 @@ st.markdown(f"""<style>
  .stButton button[kind="primary"] p,
  section[data-testid="stSidebar"] .stButton button[kind="primary"] p {{
    color:{C['on_accent']} !important; font-weight:700; }}
+ /* 안내 박스 — 스트림릿 기본 파랑이 너무 밝아 「현재 음」의 파랑과 경쟁합니다.
+    안내는 배경으로 물러나야 하므로 눌러 둡니다 */
+ div[data-testid="stAlertContainer"] {{ background:{C['panel2']} !important;
+   border:1px solid {C['line']} !important; }}
+ div[data-testid="stAlertContainer"] p {{ color:{C['ink2']} !important; }}
  div[data-testid="stMetricValue"] {{ font-family:{MONO}; }}
  hr {{ border-color:{C['line']}; }}
 </style>""", unsafe_allow_html=True)
@@ -279,7 +284,26 @@ if S.screen == "practice":
     #| 갈래  [분석하기] 를 눌렀나 ? run_analysis(녹음) : 계속 기다린다
     #| 갈래  [다시 녹음] 을 눌렀나 ? 위젯을 새로 만들어 이전 녹음을 지운다 : 그대로 둔다
     #| 갈래  분석한 결과가 있나 ? 오른쪽에 점수를 띄운다 : 손 옮기는 자리를 안내한다
-    head(title, f'{len(notes)}음 · {play_bpm} BPM · 개방현 A 440Hz 기준')
+    #| 단계  제목 줄 오른쪽에 도움말 — 화면 가운데에 두면 콘텐츠인지 메뉴인지 애매합니다
+    _h1, _h2 = st.columns([4, 1])
+    with _h1:
+        head(title, f'{len(notes)}음 · {play_bpm} BPM · 개방현 A 440Hz 기준')
+    with _h2:
+        with st.popover("❔ 연습 방법", use_container_width=True):
+            st.markdown("**① 먼저 들어보기** — 이 악보가 어떻게 들려야 하는지")
+            if st.button("🔊 기준 연주 만들기", key="mkref"):
+                S.ref_wav = analyze.reference_wav(notes, play_bpm)
+            if S.get("ref_wav"):
+                st.audio(S.ref_wav, format="audio/wav")
+            st.markdown("**② [● 시작 + 녹음]** 을 누릅니다\n\n"
+                        "마이크·메트로놈·가이드가 함께 시작합니다. 준비 시간 뒤 "
+                        "**똑 · 똑 · 똑 · 똑** 네 박을 세고 시작합니다 "
+                        "(준비 시간은 가이드 아래 **[준비]** 에서).")
+            st.markdown("**③ 연주하고, 원할 때 [분석하기]**")
+            st.caption("메트로놈 '똑' 소리는 분석에서 걸러내므로 섞여도 괜찮습니다. "
+                       "다만 크게 섞이면 음정이 흐려지니 **이어폰**을 권합니다.")
+            st.caption("떨어지는 노드와 **함께** 들으려면 "
+                       "가이드 바의 **[🔊 시범 듣기]** 를 켜세요.")
 
     #| 갈래  교정 연습 중인가 ? 원래 음계로 돌아가는 버튼을 둔다 : 넘어간다
     if S.drill:
@@ -310,26 +334,7 @@ if S.screen == "practice":
 
     with left:
         #| 단계  녹음 컨트롤을 **한 자리에** 모은다 (버튼이 흩어지면 순서를 잃습니다)
-        c1, c2 = st.columns([2.4, 1])
-        c1.markdown("#### 🎙 연습 녹음")
-        #| 갈래  아직 한 번도 안 해 봤나 ? 순서를 펴 둔다 : 버튼 뒤로 접는다
-        with c2.popover("❔ 연습 방법", use_container_width=True):
-            st.markdown("**① 먼저 들어보기** — 이 악보가 어떻게 들려야 하는지")
-            if st.button("🔊 기준 연주 만들기", key="mkref"):
-                S.ref_wav = analyze.reference_wav(notes, play_bpm)
-            if S.get("ref_wav"):
-                st.audio(S.ref_wav, format="audio/wav")
-            st.markdown("**② 마이크 버튼**으로 녹음을 시작합니다")
-            st.markdown("**③ 가이드의 [▶ 시작]** 을 누릅니다\n\n"
-                        "가이드는 저절로 시작하지 않습니다 — 녹음과 박자를 맞추기 "
-                        "위해서입니다. 준비 시간 뒤 **똑 · 똑 · 똑 · 똑** 네 박을 세고 "
-                        "시작합니다 (준비 시간은 가이드 아래 **[준비]** 에서).")
-            st.markdown("**④ [분석하기]** 를 누릅니다")
-            st.caption("메트로놈 '똑' 소리는 분석에서 걸러내므로 섞여도 괜찮습니다. "
-                       "다만 크게 섞이면 음정이 흐려지니 **이어폰**을 권합니다.")
-            st.caption("떨어지는 노드와 **함께** 들으려면 "
-                       "가이드 바의 **[🔊 시범 듣기]** 를 켜세요.")
-
+        st.markdown("#### 🎙 연습 녹음")
         #| 갈래  아직 녹음이 없고 처음인가 ? 무엇을 누를지 알려준다 : 자리를 아낀다
         if not S.coached and not S.rec_wav:
             st.info("**[● 시작 + 녹음]** 하나만 누르면 됩니다 — "
