@@ -98,6 +98,7 @@ S.setdefault("my_string", "자동")
 S.setdefault("gem_key", "")          # 사진 인식용 키 (기억만 하고 저장하지 않음)
 S.setdefault("my_demo", None)        # 「내 악보」 시범 연주
 S.setdefault("ref_wav", None)        # 「연습하기」 시범 연주
+S.setdefault("coached", False)       # 한 번이라도 분석해 봤나 (안내를 접을지)
 
 #| 입력  고른 연습 — 음계 · 범위 · 슬러 · BPM · 허용 범위
 
@@ -234,13 +235,13 @@ def head(t1, t2):
 
 
 def run_analysis(wav: bytes):
-    #| 흐름  녹음 → 분석 → 결과 화면으로 넘어간다
+    #| 흐름  녹음 → 분석 → **그 자리에** 점수를 띄운다 (화면을 안 옮깁니다)
     #| 입력  녹음 WAV
     #| 호출  analyze.analyze → 음별 결과
     #| 갈래  분석이 실패했나 ? 이유를 보여주고 멈춘다 : 계속한다
     #| 갈래  음을 하나도 못 찾았나 ? 마이크를 확인하라고 한다 : 계속한다
     #| 단계  결과와 녹음을 기억해 둔다 (새로고침해도 남게)
-    #| 출력  분석 리포트 화면으로 전환
+    #| 출력  연습 화면에 뜨는 「연주 결과」 카드
     from datetime import datetime
     try:
         res = analyze.analyze(wav, notes, play_bpm, S.tol_cent, S.tol_ms)
@@ -252,8 +253,8 @@ def run_analysis(wav: bytes):
         return
     S.result, S.wav, S.meta = res, wav, title
     S.when = datetime.now().strftime("%Y-%m-%d %H:%M")
-    S.screen = "report"
-    st.rerun()
+    S.coached = True          # 한 번 해 봤으면 안내를 접습니다
+    st.rerun()                # 화면은 그대로 — 아래에 「연주 결과」가 뜹니다
 
 
 # ══════════════════════════════════════════════════════════════
@@ -265,9 +266,8 @@ if S.screen == "practice":
     #| 호출  screens.guide → 움직이는 가이드 HTML
     #| 단계  마이크 녹음 위젯을 놓는다
     #| 갈래  [분석하기] 를 눌렀나 ? run_analysis(녹음) : 계속 기다린다
-    #| 갈래  [데모로 보기] 를 눌렀나 ? run_analysis(합성 연주) : 계속 기다린다
     #| 갈래  [다시 녹음] 을 눌렀나 ? 위젯을 새로 만들어 이전 녹음을 지운다 : 그대로 둔다
-    #| 단계  오른쪽에 악보를 바꾸는 길과 손 옮기는 자리 안내를 둔다
+    #| 갈래  분석한 결과가 있나 ? 오른쪽에 점수를 띄운다 : 손 옮기는 자리를 안내한다
     head(title, f'{len(notes)}음 · {play_bpm} BPM · 개방현 A 440Hz 기준')
 
     #| 갈래  교정 연습 중인가 ? 원래 음계로 돌아가는 버튼을 둔다 : 넘어간다
@@ -283,62 +283,89 @@ if S.screen == "practice":
     left, right = st.columns([1.15, 1])
 
     with left:
-        st.markdown("#### 녹음하기")
-        st.caption(
-            "① 마이크 버튼으로 녹음을 시작하고 ② 가이드의 **[▶ 시작]** 을 누르세요. "
-            "가이드는 저절로 시작하지 않습니다 — 녹음과 박자를 맞추기 위해서입니다. "
-            "준비 시간이 지난 뒤 **똑 · 똑 · 똑 · 똑** 네 박을 세고 시작합니다 "
-            "(준비 시간은 가이드 아래 **[준비]** 에서 바꿉니다). "
-            "메트로놈 '똑' 소리는 분석에서 걸러내므로 섞여도 괜찮습니다 — "
-            "다만 크게 섞이면 음정이 흐려지니 **이어폰**을 권합니다."
-        )
-        #| 갈래  시범 연주를 청했나 ? 기준 소리를 만들어 붙인다 : 넘어간다
-        with st.expander("🔊 먼저 들어보기 — 이 악보의 기준 연주"):
-            st.caption("정확한 음정·박자로 만든 소리입니다. "
-                       "가이드 바의 **[🔊 시범 듣기]** 를 켜면 "
-                       "떨어지는 노드와 **함께** 들을 수도 있습니다.")
-            if st.button("시범 연주 만들기", key="mkref"):
+        #| 단계  녹음 컨트롤을 **한 자리에** 모은다 (버튼이 흩어지면 순서를 잃습니다)
+        c1, c2 = st.columns([2.4, 1])
+        c1.markdown("#### 🎙 연습 녹음")
+        #| 갈래  아직 한 번도 안 해 봤나 ? 순서를 펴 둔다 : 버튼 뒤로 접는다
+        with c2.popover("❔ 연습 방법", use_container_width=True):
+            st.markdown("**① 먼저 들어보기** — 이 악보가 어떻게 들려야 하는지")
+            if st.button("🔊 기준 연주 만들기", key="mkref"):
                 S.ref_wav = analyze.reference_wav(notes, play_bpm)
             if S.get("ref_wav"):
                 st.audio(S.ref_wav, format="audio/wav")
+            st.markdown("**② 마이크 버튼**으로 녹음을 시작합니다")
+            st.markdown("**③ 가이드의 [▶ 시작]** 을 누릅니다\n\n"
+                        "가이드는 저절로 시작하지 않습니다 — 녹음과 박자를 맞추기 "
+                        "위해서입니다. 준비 시간 뒤 **똑 · 똑 · 똑 · 똑** 네 박을 세고 "
+                        "시작합니다 (준비 시간은 가이드 아래 **[준비]** 에서).")
+            st.markdown("**④ [분석하기]** 를 누릅니다")
+            st.caption("메트로놈 '똑' 소리는 분석에서 걸러내므로 섞여도 괜찮습니다. "
+                       "다만 크게 섞이면 음정이 흐려지니 **이어폰**을 권합니다.")
+            st.caption("떨어지는 노드와 **함께** 들으려면 "
+                       "가이드 바의 **[🔊 시범 듣기]** 를 켜세요.")
+
+        if not S.coached:
+            st.info("**①** 아래 마이크로 녹음 시작 → **②** 가이드의 **[▶ 시작]** → "
+                    "**③** 연주 → **④** [분석하기]")
+        else:
+            st.caption("① 마이크 → ② 가이드 [▶ 시작] → ③ 연주 → ④ 분석하기")
 
         rec = st.audio_input("마이크", key=f"rec{S.take}", label_visibility="collapsed")
 
-        b1, b2, b3 = st.columns(3)
+        b1, b2 = st.columns([1.4, 1])
         if b1.button("분석하기", type="primary", use_container_width=True,
                      disabled=rec is None):
             with st.spinner("음정을 찾는 중…"):
                 run_analysis(rec.getvalue())
-        if b2.button("데모로 보기", use_container_width=True,
-                     help="마이크 없이 전체 흐름을 확인합니다"):
-            with st.spinner("데모 연주를 만드는 중…"):
-                run_analysis(analyze.demo_wav(notes, play_bpm))
-        if b3.button("다시 녹음", use_container_width=True):
+        if b2.button("다시 녹음", use_container_width=True, disabled=rec is None):
             S.take += 1                 # 위젯을 새로 만들어 이전 녹음을 지웁니다
             st.rerun()
 
+        #| 갈래  녹음도 결과도 없나 ? 마이크 없이 볼 수 있는 길을 작게 둔다 : 숨긴다
+        if rec is None and not S.result:
+            if st.button("마이크가 없으신가요? — 데모로 보기", use_container_width=True,
+                         help="합성 연주로 전체 흐름을 확인합니다"):
+                with st.spinner("데모 연주를 만드는 중…"):
+                    run_analysis(analyze.demo_wav(notes, play_bpm))
+
     with right:
-        #| 단계  악보를 바꾸는 길을 눈에 띄게 — 메뉴 안에만 두면 못 찾습니다
-        st.markdown("#### 악보 바꾸기")
-        st.caption("음계 말고 **내 악보**로도 연습할 수 있습니다. "
-                   "직접 적거나 · 가지고 있는 악보를 찍거나 · MusicXML 을 올리세요. "
-                   "사진은 저장하지 않습니다.")
-        if st.button("📄 내 악보 만들기 (적기 · 사진 · 파일)", type="primary",
+        #| 갈래  분석한 결과가 있나 ? 점수부터 보여준다 : 손 옮기는 자리를 안내한다
+        if S.result:
+            st.markdown("#### 🎵 연주 결과")
+            total, (p_pitch, p_beat, p_bow) = report.overall_score(
+                S.result, S.tol_cent, S.tol_ms)
+            m = st.columns(4)
+            for col, (lab, v) in zip(m, [("종합", total), ("음정", p_pitch),
+                                         ("박자", p_beat), ("활", p_bow)]):
+                col.metric(lab, f"{v:.0f}")
+            st.caption(f'{S.meta} · {S.when}')
+            r1, r2 = st.columns(2)
+            if r1.button("자세히 보기 →", type="primary", use_container_width=True):
+                S.screen = "report"
+                st.rerun()
+            if r2.button("결과 지우기", use_container_width=True):
+                S.result = None
+                st.rerun()
+        else:
+            st.markdown("#### 🖐 이번 연습의 손")
+            sh = music.shift_index(notes)
+            #| 갈래  손을 옮기는 자리가 있나 ? 어디서 어떻게 옮기는지 : 안 옮긴다고 알린다
+            if sh is not None:
+                st.info(f'**{notes[sh]["ko"]}**에서 {notes[sh-1]["position"]}→'
+                        f'{notes[sh]["position"]}포지션으로 손을 옮깁니다. '
+                        f'직전 음 **{notes[sh-1]["ko"]}**를 짚어 소리로 확인한 뒤 '
+                        f'올라가면 자리를 잡기 쉽습니다.')
+            else:
+                _p = sorted({n["position"] for n in notes})
+                st.info(f'손을 옮기지 않습니다 — **{_p[0]}포지션**에서 끝납니다.')
+            _u = sorted({n["string"] for n in notes}, key=lambda x: "EADG".index(x))
+            st.caption(f'{" · ".join(_u)}현 · {len(notes)}음 · '
+                       f'음계·포지션·활·템포는 왼쪽 사이드바(≫)에서 바꿉니다.')
+
+        if st.button("📄 다른 악보로 연습하기 (적기 · 사진 · 파일)",
                      use_container_width=True):
             S.screen = "sheet"
             st.rerun()
-        st.caption("음계·포지션·활·템포는 **왼쪽 사이드바(≫)** 에서 바꿉니다.")
-
-        sh = music.shift_index(notes)
-        #| 갈래  손을 옮기는 자리가 있나 ? 어디서 어떻게 옮기는지 : 안 옮긴다고 알린다
-        if sh is not None:
-            st.info(f'**{notes[sh]["ko"]}**에서 {notes[sh-1]["position"]}→'
-                    f'{notes[sh]["position"]}포지션으로 손을 옮깁니다. '
-                    f'직전 음 **{notes[sh-1]["ko"]}**를 짚어 소리로 확인한 뒤 '
-                    f'올라가면 자리를 잡기 쉽습니다.')
-        else:
-            _p = sorted({n["position"] for n in notes})
-            st.info(f'손을 옮기지 않습니다 — **{_p[0]}포지션**에서 끝납니다.')
 
 
 # ══════════════════════════════════════════════════════════════
@@ -354,7 +381,8 @@ elif S.screen == "report":
         head("분석 리포트", "아직 분석한 연습이 없습니다")
         st.markdown('<div class="soon">먼저 <b>연습하기</b>에서 녹음하고 '
                     '[분석하기]를 눌러 주세요.<br>'
-                    '마이크가 없으면 [데모로 보기]로 전체 흐름을 볼 수 있습니다.</div>',
+                    '마이크가 없으면 그 아래 <b>[데모로 보기]</b>로 '
+                    '전체 흐름을 볼 수 있습니다.</div>',
                     unsafe_allow_html=True)
         if st.button("연습하러 가기", type="primary"):
             S.screen = "practice"
