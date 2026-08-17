@@ -556,7 +556,7 @@ def build(res, notes, sig, bpm, wav_bytes, title, when, width=980,
    border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer;
    font-family:inherit}}
  button:hover{{border-color:{C['accent']}}}
- .main{{background:{C['accent']};border-color:{C['accent']};color:#fff;
+ .main{{background:{C['accent']};border-color:{C['accent']};color:{C['on_accent']};
    font-weight:600}}
  .hint{{font-size:11.5px;color:{C['muted']}}}
  #now{{font-family:{MONO};font-size:12px;color:{C['trace']};min-width:120px}}

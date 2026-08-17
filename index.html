@@ -37,6 +37,17 @@ function setH(h) {
   say({type: "streamlit:setFrameHeight", height: h});
 }
 
+// 안쪽 가이드는 자기 iframe 높이밖에 모릅니다.
+// 넓은 화면에서 얼마나 키워도 되는지 정하려면 **바깥 창의 높이**가 필요해서
+// 껍데기가 대신 읽어 내려보냅니다. (못 읽으면 0 — 안쪽이 알아서 합니다)
+function sendVp() {
+  let h = 0;
+  try { h = parent.innerHeight || 0; } catch (e) { h = 0; }
+  if (h && box.contentWindow) box.contentWindow.postMessage({vpH: h}, '*');
+}
+box.addEventListener('load', sendVp);
+addEventListener('resize', sendVp);
+
 addEventListener("message", (e) => {
   const d = e.data || {};
 

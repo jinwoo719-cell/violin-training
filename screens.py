@@ -169,8 +169,10 @@ def guide(notes, sig, bpm: int, inst: str = "violin", ready: int = 5) -> str:
  .pbow{{display:inline-block;font-size:12px;font-weight:600;border-radius:6px;
    padding:3px 8px;margin-bottom:7px}}
  .ppos{{font-size:11.5px;font-weight:600;margin-top:4px}}
+ /* 한 줄로 유지합니다 — 줄바꿈되면 버튼이 세로로 깨져 자리를 잃습니다 */
  #bar{{display:flex;gap:9px;align-items:center;height:{BAR_H}px;
-   color:{C['ink2']};font-size:11.5px}}
+   color:{C['ink2']};font-size:11.5px;white-space:nowrap;overflow:hidden}}
+ #bar>*{{flex:none}}
  button{{background:{C['panel2']};color:{C['ink']};border:1px solid {C['line']};
    border-radius:7px;padding:4px 11px;font-size:11.5px;cursor:pointer;
    font-family:inherit;touch-action:manipulation}}
@@ -268,11 +270,24 @@ const laneX = i => X0 + STEP * (i + 0.5);
 // 지판의 x = 너트에서의 실제 거리
 const boardX = mm => BX0 + (BX1 - BX0) * (mm / VIEW_MM);
 
-// ── 화면 폭에 맞춰 통째로 줄이기 (가로 폰 대응) ──
+// ── 화면 폭에 맞춰 통째로 키우거나 줄이기 ──
+//
+//  예전에는 상한이 1이라 넓은 화면에서도 880px 에 머물렀습니다.
+//  그래서 PC 에서 가이드만 가운데 좁게 놓이고 좌우가 비었습니다.
+//  이제 폭에 맞춰 **키웁니다.** 다만 키울 때만 화면 높이를 봅니다 —
+//  가이드가 화면을 다 먹으면 아래 [분석하기] 가 밖으로 밀려나기 때문입니다.
+//  (폰 가로에서는 s 가 1 을 넘지 않으므로 지금 그대로입니다)
+let VP_H = 0;                       // 바깥 창의 높이 (껍데기가 알려줍니다)
+addEventListener('message', (e) => {{
+  if (e.data && e.data.vpH) {{ VP_H = e.data.vpH; fit(); }}
+}});
+
 function fit() {{
   const w = document.documentElement.clientWidth;
   document.getElementById('rot').style.display = (w < 540) ? 'flex' : 'none';
-  const s = Math.max(0.5, Math.min(1, w / {W}));
+  let s = Math.max(0.5, w / {W});
+  //| 갈래  키우는 중인가 ? 화면 높이의 55% 를 넘지 않게 잡는다 : 그대로 (폰은 여기 안 걸립니다)
+  if (s > 1 && VP_H) s = Math.max(1, Math.min(s, VP_H * 0.55 / {H}));
   wrap.style.transform = `scale(${{s}})`;
   wrap.style.marginLeft = Math.max(0, (w - {W} * s) / 2) + 'px';
   fitbox.style.height = ({H} * s) + 'px';
@@ -354,6 +369,7 @@ const dmBtn = document.getElementById('dm');
 function setDemo(v) {{
   DEMO = v;
   dmBtn.style.background = v ? '{C['accent']}' : '{C['panel2']}';
+  dmBtn.style.color = v ? '{C['on_accent']}' : '{C['ink']}';
   dmBtn.style.color = v ? '#fff' : '{C['ink']}';
   dmBtn.textContent = v ? '🔊 시범 켜짐' : '🔊 시범 듣기';
 }}
@@ -436,7 +452,7 @@ async function recStart() {{
         const buf = await ac.decodeAudioData(await new Blob(chunks).arrayBuffer());
         //| 갈래  너무 짧나 ? 버린다 : 위로 올려보낸다
         if (buf.duration < 0.5) {{ recMsg('너무 짧아 버렸습니다'); return; }}
-        recMsg('✓ 녹음 ' + buf.duration.toFixed(1) + '초', '{C['good']}');
+        recMsg('✓ ' + buf.duration.toFixed(1) + '초', '{C['good']}');
         up({{violin: {{wav: toWav(buf), sec: buf.duration, id: Date.now()}}}});
       }} catch (e) {{ recMsg('소리를 읽지 못했습니다'); }}
     }};
@@ -501,13 +517,13 @@ function countIn(t) {{
       g.beginPath();
       g.arc(x0c + gap * k, cy, on ? 11 - 4 * frac : 6, 0, 6.284);
       g.fillStyle = k < b ? 'rgba(255,255,255,0.45)'
-                  : (on ? (k === 0 ? '#ff2d45' : '{C['ink']}')
+                  : (on ? (k === 0 ? '{C['accent']}' : '{C['ink']}')
                         : 'rgba(255,255,255,0.16)');
       g.fill();
     }}
     // 선생님이 세어 주듯 — 마지막 박에 「시작!」
     const say = ['하나', '둘', '셋', '넷 — 시작!'];
-    g.fillStyle = b === COUNT - 1 ? '#ff2d45' : '{C['ink2']}';
+    g.fillStyle = b === COUNT - 1 ? '{C['accent']}' : '{C['ink2']}';
     g.font = '700 12.5px system-ui';
     g.fillText(say[b] || '', BX0 / 2, cy + 30);
   }}
@@ -670,8 +686,11 @@ function board() {{
   const hg = g.createLinearGradient(0, HIT_Y - 16, 0, HIT_Y);
   hg.addColorStop(0, 'rgba(255,45,69,0)'); hg.addColorStop(1, 'rgba(255,45,69,0.18)');
   g.fillStyle = hg; g.fillRect(BX0 + 1, HIT_Y - 16, LW, 16);
-  g.shadowColor = '#ff2d45'; g.shadowBlur = 9;
-  g.strokeStyle = '#ff2d45'; g.lineWidth = 2.2;
+  // 판정선 — 예전엔 새빨간 형광이라 화면에서 제일 먼저 눈에 띄었습니다.
+  // 짚는 **순간**을 알리는 선이지 오류 표시가 아니므로 순하게 낮췄습니다.
+  // (금색으로 해 봤더니 줄 색에 묻혀 사라져서 산호색으로 갑니다)
+  g.shadowColor = '#e0736e'; g.shadowBlur = 6;
+  g.strokeStyle = '#e0736e'; g.lineWidth = 1.9;
   g.beginPath(); g.moveTo(BX0 + 1, HIT_Y); g.lineTo(LW, HIT_Y); g.stroke();
   g.restore();
 }}
@@ -745,7 +764,7 @@ function receptors(t) {{
 
 // ── 악보에서 지금 음표 켜기 ──
 // 노드는 지판 자리로 떨어지므로, "악보의 어느 음인지"는 여기서 알려줍니다.
-const INK = '#e8e6e0';
+const INK = '#e8e5dc';
 function markScore(i) {{
   if (i === marked) return;
   for (const j of [marked, i]) {{
@@ -813,7 +832,7 @@ function panel(i) {{
     if (open0) open0.style.display = '';
   }} else {{
     const ft = document.getElementById('ft' + n.finger);
-    if (ft) ft.querySelector('circle').setAttribute('fill', '#ef4444');
+    if (ft) ft.querySelector('circle').setAttribute('fill', '{C['bad']}');
   }}
 }}
 

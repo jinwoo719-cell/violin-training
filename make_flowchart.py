@@ -179,7 +179,7 @@ mermaid.initialize({{startOnLoad:false, theme:'dark', securityLevel:'loose',
   fontFamily:"'Malgun Gothic',system-ui,sans-serif",
   themeVariables:{{darkMode:true, background:'#0d1117',
     primaryColor:'#1c2230', primaryTextColor:'#e6e9ef',
-    primaryBorderColor:'#4f46e5', lineColor:'#7c8698',
+    primaryBorderColor:'#d6a85f', lineColor:'#9ba4b0',
     secondaryColor:'#161b26', tertiaryColor:'#161b26'}},
   flowchart:{{curve:'basis', nodeSpacing:34, rankSpacing:44,
     htmlLabels:false, useMaxWidth:true}}}});
@@ -211,7 +211,7 @@ window.done = (async () => {{
 
 CSS = """
 :root{--bg:#0d1117;--panel:#161b26;--line:#252c3b;--ink:#e6e9ef;
-  --ink2:#aab3c5;--muted:#7c8698;--accent:#4f46e5}
+  --ink2:#b3b8bf;--muted:#9ba4b0;--accent:#d6a85f}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);
   font-family:'Malgun Gothic',system-ui,-apple-system,sans-serif;

@@ -54,7 +54,7 @@ st.markdown(f"""<style>
  section[data-testid="stSidebar"] .stButton button:hover {{
    background:{C['panel2']}; color:{C['ink']}; }}
  section[data-testid="stSidebar"] .stButton button[kind="primary"] {{
-   background:{C['accent']}; color:#fff; font-weight:600; }}
+   background:{C['accent']}; color:{C['on_accent']}; font-weight:700; }}
  .brand {{ display:flex; align-items:center; gap:9px; padding:2px 4px 14px;
    font-size:16.5px; font-weight:700; color:{C['ink']}; }}
  .brand span {{ color:{C['accent']}; font-size:19px; }}
@@ -70,6 +70,12 @@ st.markdown(f"""<style>
  .soon {{ background:{C['panel']}; border:1px dashed {C['line']};
    border-radius:14px; padding:34px; text-align:center; color:{C['muted']};
    font-size:13.5px; line-height:2; }}
+ /* 골드 버튼 위 글자는 어두워야 읽힙니다 (흰 글자는 대비가 2:1 밖에 안 나옵니다) */
+ .stButton button[kind="primary"] {{ background:{C['accent']} !important;
+   border-color:{C['accent']} !important; }}
+ .stButton button[kind="primary"] p,
+ section[data-testid="stSidebar"] .stButton button[kind="primary"] p {{
+   color:{C['on_accent']} !important; font-weight:700; }}
  div[data-testid="stMetricValue"] {{ font-family:{MONO}; }}
  hr {{ border-color:{C['line']}; }}
 </style>""", unsafe_allow_html=True)
@@ -293,7 +299,14 @@ if S.screen == "practice":
         st.rerun()
 
     st.markdown("")
-    left, right = st.columns([1.15, 1])
+    #| 갈래  오른쪽에 보여줄 게 있나 ? 두 칸으로 나눈다 : 녹음이 폭을 다 쓴다
+    #|       (손 옮기는 자리가 없고 결과도 없으면, 오른쪽은 가이드 패널과
+    #|        같은 말을 되풀이할 뿐입니다 — 그럴 바엔 칸을 안 만듭니다)
+    _shift = music.shift_index(notes)
+    if S.result or _shift is not None:
+        left, right = st.columns([1.15, 1])
+    else:
+        left, right = st.container(), None
 
     with left:
         #| 단계  녹음 컨트롤을 **한 자리에** 모은다 (버튼이 흩어지면 순서를 잃습니다)
@@ -317,25 +330,28 @@ if S.screen == "practice":
             st.caption("떨어지는 노드와 **함께** 들으려면 "
                        "가이드 바의 **[🔊 시범 듣기]** 를 켜세요.")
 
-        if not S.coached:
+        #| 갈래  아직 녹음이 없고 처음인가 ? 무엇을 누를지 알려준다 : 자리를 아낀다
+        if not S.coached and not S.rec_wav:
             st.info("**[● 시작 + 녹음]** 하나만 누르면 됩니다 — "
                     "마이크·메트로놈·가이드가 **함께** 시작합니다.")
 
         #| 갈래  녹음이 있나 ? 들려주고 분석할지 묻는다 : 시작 버튼을 가리킨다
         if S.rec_wav:
-            st.audio(S.rec_wav, format="audio/wav")
-            st.caption(f"방금 연주 · {S.rec_sec:.1f}초")
-            g1, g2 = st.columns([1.4, 1])
-            if g1.button("분석하기", type="primary", use_container_width=True):
+            #| 단계  [분석하기] 를 **맨 위에** 둔다 —
+            #|       녹음 플레이어를 먼저 놓았더니 버튼이 화면 밖으로 밀렸습니다
+            g1, g2 = st.columns([2.2, 1])
+            if g1.button(f"🔎 분석하기  ({S.rec_sec:.1f}초 녹음)", type="primary",
+                         use_container_width=True):
                 with st.spinner("음정을 찾는 중…"):
                     run_analysis(S.rec_wav)
             if g2.button("지우기", use_container_width=True):
                 S.rec_wav = None
                 S.result = None
                 st.rerun()
-            st.caption("분석은 원할 때만 하세요. 여러 번 연주해 보고 "
+            st.audio(S.rec_wav, format="audio/wav")
+            st.caption("분석은 원할 때만 하면 됩니다. 여러 번 연주해 보고 "
                        "마음에 드는 것 하나만 분석해도 됩니다 — "
-                       "다시 [● 시작 + 녹음] 을 누르면 이 녹음은 새것으로 바뀝니다.")
+                       "다시 [● 시작 + 녹음] 을 누르면 이 녹음이 새것으로 바뀝니다.")
         else:
             st.caption("위 가이드의 **[● 시작 + 녹음]** 을 누르면 여기에 녹음이 담깁니다.")
             #| 갈래  마이크가 안 열리나 ? 파일로 올릴 길을 둔다 : 접어 둔다
@@ -353,45 +369,40 @@ if S.screen == "practice":
                     with st.spinner("데모 연주를 만드는 중…"):
                         run_analysis(analyze.demo_wav(notes, play_bpm))
 
-    with right:
-        #| 갈래  분석한 결과가 있나 ? 점수부터 보여준다 : 손 옮기는 자리를 안내한다
-        if S.result:
-            st.markdown("#### 🎵 연주 결과")
-            total, (p_pitch, p_beat, p_bow) = report.overall_score(
-                S.result, S.tol_cent, S.tol_ms)
-            m = st.columns(4)
-            for col, (lab, v) in zip(m, [("종합", total), ("음정", p_pitch),
-                                         ("박자", p_beat), ("활", p_bow)]):
-                col.metric(lab, f"{v:.0f}")
-            st.caption(f'{S.meta} · {S.when}')
-            r1, r2 = st.columns(2)
-            if r1.button("자세히 보기 →", type="primary", use_container_width=True):
-                S.screen = "report"
-                st.rerun()
-            if r2.button("결과 지우기", use_container_width=True):
-                S.result = None
-                st.rerun()
-        else:
-            st.markdown("#### 🖐 이번 연습의 손")
-            sh = music.shift_index(notes)
-            #| 갈래  손을 옮기는 자리가 있나 ? 어디서 어떻게 옮기는지 : 안 옮긴다고 알린다
-            if sh is not None:
-                st.info(f'**{notes[sh]["ko"]}**에서 {notes[sh-1]["position"]}→'
-                        f'{notes[sh]["position"]}포지션으로 손을 옮깁니다. '
-                        f'직전 음 **{notes[sh-1]["ko"]}**를 짚어 소리로 확인한 뒤 '
-                        f'올라가면 자리를 잡기 쉽습니다.')
+    #| 갈래  오른쪽 칸이 있나 ? 결과 또는 손 옮기는 자리를 보여준다 : 넘어간다
+    if right is not None:
+        with right:
+            if S.result:
+                st.markdown("#### 🎵 연주 결과")
+                total, (p_pitch, p_beat, p_bow) = report.overall_score(
+                    S.result, S.tol_cent, S.tol_ms)
+                m = st.columns(4)
+                for col, (lab, v) in zip(m, [("종합", total), ("음정", p_pitch),
+                                             ("박자", p_beat), ("활", p_bow)]):
+                    col.metric(lab, f"{v:.0f}")
+                st.caption(f'{S.meta} · {S.when}')
+                r1, r2 = st.columns(2)
+                if r1.button("자세히 보기 →", type="primary",
+                             use_container_width=True):
+                    S.screen = "report"
+                    st.rerun()
+                if r2.button("결과 지우기", use_container_width=True):
+                    S.result = None
+                    st.rerun()
             else:
-                _p = sorted({n["position"] for n in notes})
-                st.info(f'손을 옮기지 않습니다 — **{_p[0]}포지션**에서 끝납니다.')
-            _u = sorted({n["string"] for n in notes}, key=lambda x: "EADG".index(x))
-            st.caption(f'{" · ".join(_u)}현 · {len(notes)}음 · '
-                       f'음계·포지션·활·템포는 왼쪽 사이드바(≫)에서 바꿉니다.')
+                #| 단계  손을 옮기는 연습일 때만 — 가이드가 말해 주지 않는 것입니다
+                st.markdown("#### 🖐 손 옮기는 자리")
+                st.info(f'**{notes[_shift]["ko"]}**에서 '
+                        f'{notes[_shift-1]["position"]}→'
+                        f'{notes[_shift]["position"]}포지션으로 손을 옮깁니다. '
+                        f'직전 음 **{notes[_shift-1]["ko"]}**를 짚어 소리로 확인한 뒤 '
+                        f'올라가면 자리를 잡기 쉽습니다.')
 
-        if st.button("📄 다른 악보로 연습하기 (적기 · 사진 · 파일)",
-                     use_container_width=True):
-            S.screen = "sheet"
-            st.rerun()
-
+    #| 단계  악보 바꾸는 길 — 연습의 주인공이 아니므로 작게, 맨 아래에
+    st.caption("")
+    if st.button("📄 다른 악보 (적기 · 사진 · 파일)"):
+        S.screen = "sheet"
+        st.rerun()
 
 # ══════════════════════════════════════════════════════════════
 #  분석 리포트

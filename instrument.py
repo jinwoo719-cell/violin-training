@@ -170,7 +170,7 @@ PALM = "M 34 84 L 104 84 C 110 84 113 88 113 94 L 113 118 "\
        "L 30 94 C 30 88 30 84 34 84 Z"
 
 
-def hand_html(inst, size: int = 108, mark="#ef4444", dim="#2f3644",
+def hand_html(inst, size: int = 108, mark="#d96868", dim="#2f3644",
               ink="#ffffff") -> str:
     """손 사진 + 내가 그리는 손끝 배지.
 

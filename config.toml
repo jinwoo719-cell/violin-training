@@ -1,10 +1,12 @@
-# 스트림릿 기본 테마 — 나머지 색은 theme.py 와 app.py 의 CSS 가 맞춥니다
+# 스트림릿 기본 테마 — theme.py 의 Warm Violin 팔레트와 같은 값입니다.
+# 여기를 안 맞추면 슬라이더·체크박스처럼 **스트림릿이 직접 그리는 것**만
+# 옛 색(보라)으로 남습니다.
 [theme]
 base = "dark"
-primaryColor = "#4f46e5"
-backgroundColor = "#0d1117"
-secondaryBackgroundColor = "#161b26"
-textColor = "#e6e9ef"
+primaryColor = "#d6a85f"            # C["accent"] — 골드
+backgroundColor = "#0d1117"         # C["bg"]
+secondaryBackgroundColor = "#171e27"  # C["panel"]
+textColor = "#f2f0ea"               # C["ink"]
 font = "sans serif"
 
 [server]

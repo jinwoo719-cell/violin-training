@@ -11,12 +11,12 @@ import music
 
 #| 흐름  음 목록 → 악보 한 줄 SVG (가로 좌표를 여기서만 정한다)
 
-INK = "#e8e6e0"
+INK = "#e8e5dc"        # 악보 — 순백이 아니라 아이보리 (나무색과 이어지게)
 AXIS = "#5a5a56"
 MUT = "#8a8a86"
-DOWN_COLOR = "#3987e5"     # 다운보우 ⊓
-UP_COLOR = "#d95926"       # 업보우   ∨
-POS_COLOR = {1: "#199e70", 3: "#c98500"}
+DOWN_COLOR = "#5da9e9"     # 다운보우 ⊓
+UP_COLOR = "#c9814a"         # 업보우   ∨
+POS_COLOR = {1: "#4f8f6c", 3: "#a8813a"}
 
 GAP = 11                   # 오선 간격 (줄과 줄 사이)
 
