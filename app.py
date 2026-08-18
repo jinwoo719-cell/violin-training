@@ -8,6 +8,7 @@
 """
 
 import base64
+import json
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -87,6 +88,11 @@ st.markdown(f"""<style>
  div[data-testid="stAlertContainer"] {{ background:{C['panel2']} !important;
    border:1px solid {C['line']} !important; }}
  div[data-testid="stAlertContainer"] p {{ color:{C['ink2']} !important; }}
+ /* 저장 컴포넌트는 화면에 없어야 합니다 — 높이 0 인데도 스트림릿이 자리를 줍니다.
+    폰 가로에서 30px 는 가이드가 잘리느냐 마느냐를 가릅니다. */
+ div[data-testid="stElementContainer"]:has(iframe[title*="violin_store"]) {{
+   height:0 !important; min-height:0 !important; margin:0 !important;
+   padding:0 !important; overflow:hidden; }}
  div[data-testid="stMetricValue"] {{ font-family:{MONO}; }}
  hr {{ border-color:{C['line']}; }}
 </style>""", unsafe_allow_html=True)
@@ -121,6 +127,10 @@ S.setdefault("coached", False)       # 한 번이라도 분석해 봤나 (안내
 S.setdefault("rec_wav", None)        # 가이드가 되돌려 준 녹음
 S.setdefault("rec_sec", 0)
 S.setdefault("last_rec", None)       # 같은 녹음을 두 번 받지 않으려고
+S.setdefault("saved", [])            # 브라우저에 담아 둔 내 악보들
+S.setdefault("put", None)            # 브라우저에 쓸 것 (다 쓰면 비웁니다)
+S.setdefault("rev", 0)               # 쓸 때마다 올리는 번호
+S.setdefault("store_ok", True)       # 브라우저가 저장을 막지 않았나
 
 #| 입력  고른 연습 — 음계 · 범위 · 슬러 · BPM · 허용 범위
 
@@ -163,6 +173,27 @@ with st.sidebar:
     S.slur = st.selectbox("활 나누기", list(music.SLURS.keys()),
                           index=list(music.SLURS).index(S.slur))
     S.bpm = st.slider("BPM", 40, 120, S.bpm, step=5)
+
+
+# ══════════════════════════════════════════════════════════════
+#  내 악보 보관 — **이 브라우저에만** 담습니다 (서버로 안 갑니다)
+# ══════════════════════════════════════════════════════════════
+#| 호출  screens.store → 브라우저에 담긴 내 악보들
+#| 갈래  받아 왔나 ? 목록을 새로 하고 다 쓴 put 을 비운다 : 그대로 둔다
+_got = screens.store(put=S.put, rev=S.rev)
+if isinstance(_got, dict):
+    S.saved = _got.get("sheets", []) or []
+    S.store_ok = _got.get("ok", True)
+    if _got.get("rev") == S.rev:
+        S.put = None                 # 다 썼습니다
+
+
+def save_sheets(items):
+    """브라우저에 담긴 목록을 통째로 바꿉니다."""
+    #| 흐름  새 목록을 넘기고 번호를 올려 다시 그린다
+    S.put = items
+    S.rev += 1
+    st.rerun()
 
 
 _, string_name, mode = music.PRACTICES[S.practice]
@@ -556,6 +587,69 @@ elif S.screen == "sheet":
             except Exception as e:
                 st.error(f"읽지 못했습니다 — {e}")
 
+    # ══════════════════════════════════════════════════════
+    #  담아 둔 악보들 — 이 브라우저에만 있습니다
+    # ══════════════════════════════════════════════════════
+    #| 갈래  담아 둔 악보가 있나 ? 목록을 보여준다 : 어떻게 담는지만 알린다
+    #| 반복  담아 둔 악보마다 — [연습] · [불러오기] · [지우기]
+    st.markdown("---")
+    st.markdown(f"#### 📚 내 악보 ({len(S.saved)})")
+    if not S.store_ok:
+        st.warning("이 브라우저가 저장을 막아 두었습니다 (시크릿 창일 수 있습니다). "
+                   "아래 **내보내기**로 파일로 받아 두세요.")
+    st.caption("**이 브라우저에만** 담깁니다 — 서버로 가지 않고, 다른 사람은 못 봅니다. "
+               "사진 원본이 아니라 **읽어낸 음 목록**만 담습니다. "
+               "브라우저 기록을 지우면 같이 지워지니, 오래 둘 것은 내보내 두세요.")
+
+    if S.saved:
+        for it in S.saved:
+            b1, b2, b3, b4 = st.columns([3.2, 1, 1, 0.8])
+            b1.markdown(f'**{it.get("name","(이름 없음)")}**  '
+                        f'<span style="color:{C["muted"]};font-size:12px">'
+                        f'{it.get("n","?")}음 · '
+                        f'{dict((v, n) for n, v in sheet.KEYS).get(it.get("key", 0), "")}'
+                        f'</span>', unsafe_allow_html=True)
+            if b2.button("연습", key=f'go{it["id"]}', use_container_width=True):
+                pp, _ = sheet.parse(it["text"])
+                S.my = {"parsed": pp, "key": it.get("key", 0),
+                        "name": it.get("name", "내 악보"),
+                        "string": it.get("string", "자동")}
+                S.drill = None
+                S.screen = "practice"
+                S.take += 1
+                st.rerun()
+            if b3.button("고치기", key=f'ed{it["id"]}', use_container_width=True):
+                S.my_text = it["text"]
+                S.my_name = it.get("name", "내 악보")
+                S.my_key = it.get("key", 0)
+                S.my_string = it.get("string", "자동")
+                st.rerun()
+            if b4.button("✕", key=f'rm{it["id"]}', use_container_width=True):
+                save_sheets([x for x in S.saved if x["id"] != it["id"]])
+
+        e1, e2 = st.columns(2)
+        e1.download_button("⬇ 내보내기 (.json)",
+                           data=json.dumps(S.saved, ensure_ascii=False, indent=1),
+                           file_name="내악보.json", mime="application/json",
+                           use_container_width=True)
+    else:
+        st.caption("아직 담아 둔 악보가 없습니다. 위에서 악보를 읽은 뒤 "
+                   "**[💾 내 악보에 담기]** 를 누르세요.")
+        e2 = st.columns(2)[1]
+
+    #| 갈래  가져오기 파일을 올렸나 ? 지금 목록에 합친다 : 넘어간다
+    up = e2.file_uploader("가져오기 (.json)", type=["json"], key=f"imp{S.take}",
+                          label_visibility="collapsed")
+    if up is not None and st.button("가져온 악보 합치기", use_container_width=True):
+        try:
+            got = json.loads(up.getvalue().decode("utf-8"))
+            names = {x.get("name") for x in got if isinstance(x, dict)}
+            merged = [x for x in S.saved if x.get("name") not in names] + \
+                     [x for x in got if isinstance(x, dict) and x.get("text")]
+            save_sheets(merged)
+        except Exception as e:
+            st.error(f"읽지 못했습니다 — {e}")
+
     st.markdown("---")
     st.markdown("#### 악보 고치기")
     S.my_text = st.text_area("음", S.my_text, height=100, label_visibility="collapsed")
@@ -605,13 +699,26 @@ elif S.screen == "sheet":
                            "적은 대로 나오는지 귀로도 확인해 보세요 "
                            "(악보가 틀리면 여기서 바로 들립니다).")
 
-            if st.button("이 악보로 연습하기", type="primary"):
+            p1, p2 = st.columns([1.6, 1])
+            if p1.button("이 악보로 연습하기", type="primary",
+                         use_container_width=True):
                 S.my = {"parsed": parsed, "key": S.my_key,
                         "name": S.my_name or "내 악보", "string": S.my_string}
                 S.drill = None
                 S.screen = "practice"
                 S.take += 1
                 st.rerun()
+            #| 갈래  [내 악보에 담기] 를 눌렀나 ? 브라우저에 담는다 : 그대로 둔다
+            if p2.button("💾 내 악보에 담기", use_container_width=True,
+                         disabled=not S.store_ok,
+                         help="이 브라우저에만 담깁니다 — 서버로 가지 않습니다"):
+                name = (S.my_name or "내 악보").strip()
+                item = {"id": f"{len(S.saved)}-{name}-{len(parsed)}",
+                        "name": name, "text": sheet.to_text(parsed),
+                        "key": S.my_key, "string": S.my_string, "n": len(parsed)}
+                #| 갈래  같은 이름이 이미 있나 ? 덮어쓴다 : 뒤에 붙인다
+                rest = [x for x in S.saved if x.get("name") != name]
+                save_sheets(rest + [item])
 
 
     with t3:

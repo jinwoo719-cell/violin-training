@@ -52,6 +52,25 @@ if not os.path.isfile(os.path.join(_GUIDE_DIR, "index.html")):
 
 _GUIDE = components.declare_component("violin_guide", path=_GUIDE_DIR)
 
+_STORE_DIR = os.path.join(os.path.dirname(__file__), "store_component")
+_STORE = (components.declare_component("violin_store", path=_STORE_DIR)
+          if os.path.isfile(os.path.join(_STORE_DIR, "index.html")) else None)
+
+
+def store(put=None, rev: int = 0, key: str = "store"):
+    """내 악보를 **이 브라우저에만** 담아 둡니다. 서버로 안 갑니다.
+
+    put 을 주고 rev 를 올리면 그 값으로 덮어씁니다.
+    돌려주는 것: {"rev": 번호, "sheets": [...], "ok": 저장됐나} 또는 None.
+    """
+    #| 흐름  브라우저 저장소에 쓰고, 지금 담긴 것을 받아 온다
+    #| 입력  새 목록(put) · 번호(rev)
+    #| 갈래  저장 컴포넌트가 있나 ? 주고받는다 : None (저장 없이 그냥 돕니다)
+    #| 출력  {rev, sheets, ok} 또는 None
+    if _STORE is None:
+        return None
+    return _STORE(put=put, rev=rev, key=key, default=None)
+
 
 def guide_component(html: str, height: int, key: str = "guide"):
     """가이드를 띄우고, **녹음한 소리를 되돌려 받습니다.**
@@ -119,8 +138,8 @@ def _score(notes, sig, x0, step, base=0, first=True):
     parts.append(f'<rect class="cur" x="{x0:.1f}" y="{top-9}" width="{step:.1f}" '
                  f'height="{staff.GAP*4+18}" fill="#ffffff" fill-opacity="0.13" '
                  f'stroke="#ffffff" stroke-opacity="0.5" stroke-width="1.4" rx="6"/>')
-    return (f'<svg class="pg" data-pg="{base}" viewBox="0 0 {LW} {bottom}" '
-            f'width="{LW}" height="{bottom}" '
+    return (f'<svg class="pg" data-pg="{base}" viewBox="0 0 {W} {bottom}" '
+            f'width="{W}" height="{bottom}" '
             f'style="display:{"block" if first else "none"}">{"".join(parts)}</svg>'), bottom
 
 
@@ -136,7 +155,7 @@ def guide(notes, sig, bpm: int, inst: str = "violin", ready: int = 5) -> str:
     #| 출력  HTML  (JS 가 매 프레임 다시 그림)
     ins = instrument.get(inst)
     x0 = max(70, staff.head_width(sig))
-    x1 = LW - 22
+    x1 = W - 22                      # 악보는 안내 패널까지 넘어 전체 폭을 씁니다
     #| 호출  paginate → 4마디씩 끊은 장들
     pages = paginate(notes)
     # 간격은 **가장 긴 장** 기준으로 한 번만 정합니다.
@@ -205,9 +224,10 @@ def guide(notes, sig, bpm: int, inst: str = "violin", ready: int = 5) -> str:
  #fit{{width:100%;overflow:hidden}}
  #wrap{{width:{W}px;transform-origin:top left;
    font-family:system-ui,-apple-system,'Malgun Gothic',sans-serif}}
+ #top{{width:{W}px}}                 /* 악보 — 전체 폭 */
  #row{{display:flex;gap:{GAPX}px}}
  #left{{width:{LW}px;flex:none}}
- canvas{{display:block;border-radius:0 0 12px 12px}}
+ canvas{{display:block;border-radius:12px}}
  #panel{{width:{PANEL_W}px;flex:none;background:{C['panel']};
    border:1px solid {C['line']};border-radius:12px;padding:11px 13px;
    height:{cv_h}px;box-sizing:border-box;display:flex;flex-direction:column}}
@@ -244,9 +264,11 @@ def guide(notes, sig, bpm: int, inst: str = "violin", ready: int = 5) -> str:
    text-align:center;line-height:2;z-index:9}}
 </style></head><body>
 <div id="fit"><div id="wrap">
+ <!-- 악보는 **화면 폭을 다 씁니다.** 오른쪽 안내 패널 옆에 끼워 넣으면
+      4마디가 좁은 칸에 눌려 음표가 겹칩니다. 패널은 그만큼 아래로 내렸습니다. -->
+ <div id="top">{score_svg}</div>
  <div id="row">
   <div id="left">
-   {score_svg}
    <canvas id="cv" width="{LW}" height="{cv_h}"></canvas>
   </div>
   <div id="panel">
@@ -318,9 +340,8 @@ const wrap = document.getElementById('wrap'), fitbox = document.getElementById('
 const P = {{ko: pko, fg: pfg, bow: pbow, pos: ppos,
            str: document.getElementById('pstr')}};
 
-// 낙하 레인의 x = 악보 음표의 x.  파이썬이 미리 계산해 실어 보냅니다
-// (악보가 여러 장으로 나뉘면 음 번호만으로는 x 를 알 수 없습니다)
-const laneX = i => NOTES[i].x;
+// 노드는 **지판 자리**로 떨어집니다 (악보 x 가 아니라). 아래 boardX 를 씁니다.
+// 악보 x(n.x)는 커서를 옮길 때만 씁니다 — 두 축은 뜻이 다릅니다.
 // 지판의 x = 너트에서의 실제 거리
 const boardX = mm => BX0 + (BX1 - BX0) * (mm / VIEW_MM);
 

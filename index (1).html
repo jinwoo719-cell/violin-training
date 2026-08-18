@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>violin store</title>
+<!--
+  내 악보를 **이 브라우저에만** 담아 두는 곳.  화면에는 안 보입니다.
+
+  왜 서버가 아니라 브라우저인가:
+    저작권법 제30조는 "**그 이용자는** 복제할 수 있다"고 못박습니다.
+    복제의 주체가 본인이어야 사적 복제입니다.
+    앱 서버에 쌓으면 주체가 서비스 제공자가 되어 전혀 다른 이야기가 됩니다.
+    브라우저 안(localStorage)은 **사용자의 기기**이므로 그 문제가 없습니다.
+
+    덤으로 — Streamlit Cloud 는 재시작하면 파일이 날아갑니다.
+    서버 저장은 되지도 않습니다.
+
+  담는 것은 **읽어낸 음 목록(글자)** 뿐입니다. 사진 원본은 담지 않습니다.
+  다시 연습할 때 필요한 건 사진이 아니라 "라 시 도♯5 레 …" 이니까요.
+  사진은 수 MB, 이 글자는 수백 바이트입니다.
+
+  파이썬과 이렇게 주고받습니다.
+    파이썬 → {put: 새 목록, rev: 번호}    rev 가 올라갔을 때만 씁니다
+    파이썬 ← {rev: 번호, sheets: 목록}    쓰든 안 쓰든 지금 목록을 돌려줍니다
+  같은 값을 돌려주면 스트림릿이 다시 돌지 않으므로 무한히 반복되지 않습니다.
+-->
+<style>html,body{margin:0;padding:0;height:0;overflow:hidden}</style></head>
+<body>
+<script>
+const say = (m) => parent.postMessage(Object.assign({isStreamlitMessage: true}, m), "*");
+say({type: "streamlit:componentReady", apiVersion: 1});
+
+const KEY = "vc_sheets";
+let lastRev = -1;
+
+function load() {
+  // 브라우저가 저장을 막아 두었을 수도 있습니다 (시크릿 창 등)
+  try { return JSON.parse(localStorage.getItem(KEY) || "[]"); } catch (e) { return []; }
+}
+function save(v) {
+  try { localStorage.setItem(KEY, JSON.stringify(v)); return true; } catch (e) { return false; }
+}
+
+addEventListener("message", (e) => {
+  const d = e.data || {};
+  if (d.type !== "streamlit:render") return;
+  const a = d.args || {};
+  say({type: "streamlit:setFrameHeight", height: 0});
+
+  // rev 가 올라갔을 때만 씁니다. 안 그러면 다시 그릴 때마다 덮어씁니다.
+  let ok = true;
+  if (typeof a.rev === "number" && a.rev > lastRev) {
+    lastRev = a.rev;
+    if (a.put !== null && a.put !== undefined) ok = save(a.put);
+  }
+  say({type: "streamlit:setComponentValue",
+       value: {rev: lastRev, sheets: load(), ok: ok}, dataType: "json"});
+});
+</script>
+</body></html>
