@@ -178,6 +178,27 @@ with st.sidebar:
 # ══════════════════════════════════════════════════════════════
 #  내 악보 보관 — **이 브라우저에만** 담습니다 (서버로 안 갑니다)
 # ══════════════════════════════════════════════════════════════
+# ── 버전이 어긋났는지 먼저 봅니다 ──
+#
+#  파일을 하나씩 올리다 보면 app.py 만 새것이고 screens.py 는 옛것인 일이
+#  생깁니다. 그러면 AttributeError 가 나는데, 스트림릿 클라우드는 원인을
+#  가려 버려서 "무엇이 문제인지" 알 수가 없습니다.
+#  그래서 **여기서 먼저 확인하고 사람 말로 알려 줍니다.**
+#| 갈래  필요한 함수가 다 있나 ? 계속한다 : 무엇이 옛 버전인지 알리고 멈춘다
+_NEED = {"screens": ["guide", "guide_component", "store", "paginate"],
+         "music":   ["POSITIONS", "build_notes"],
+         "sheet":   ["build", "list_models"]}
+_old = [f"{m}.py" for m, fns in _NEED.items()
+        for f in fns if not hasattr(globals()[m], f)]
+if _old:
+    st.error(f"**{' · '.join(sorted(set(_old)))} 가 옛 버전입니다.** "
+             "파일을 하나씩 올리면 이렇게 어긋납니다 — "
+             "`violin_training_업로드.zip` 을 **통째로** 올려 주세요.")
+    st.caption("한 파일만 새것이면 앱이 서로를 못 알아봅니다. "
+               "폴더(`guide_component/` · `store_component/` · `.streamlit/`)도 "
+               "같이 있어야 합니다.")
+    st.stop()
+
 #| 호출  screens.store → 브라우저에 담긴 내 악보들
 #| 갈래  받아 왔나 ? 목록을 새로 하고 다 쓴 put 을 비운다 : 그대로 둔다
 _got = screens.store(put=S.put, rev=S.rev)
