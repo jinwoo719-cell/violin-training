@@ -28,10 +28,10 @@ from theme import C          # 색은 theme.py 한곳에서
 # ── 논리 크기 (가로 폰 기준) ──
 W = 880             # 전체 폭
 H = 364             # 전체 높이 (가로 폰 한 화면)
-PANEL_W = 204       # 오른쪽 「다음 음 안내」 폭 — 남는 만큼 악보·지판이 넓어집니다
-BODY_EDGE = 34      # 지판 오른쪽에 남기는 몸통 가장자리
+PANEL_W = 190       # 오른쪽 「다음 음 안내」 폭 — 포지션·줄·브리지를 한 줄로 합쳐 줄였습니다
+BODY_EDGE = 42      # 지판 오른쪽에 남기는 몸통 가장자리 (패널에 안 붙게)
                     # (브리지는 안내 패널로 옮겼습니다 — 지판을 넓게 쓰려고)
-GAPX = 12
+GAPX = 20           # 지판과 안내 패널 사이 틈 — 붙어 있으면 겹쳐 보입니다
 LW = W - PANEL_W - GAPX       # 왼쪽(악보+캔버스) 폭
 BAR_H = 24          # 맨 아래 설명 줄
 LANE_H = 78         # 노드가 떨어지는 구간
@@ -149,13 +149,16 @@ def guide(notes, sig, bpm: int, inst: str = "violin", ready: int = 5) -> str:
     #| 입력  음 목록 · 조표 · BPM · 악기 · 준비 시간
     #| 호출  instrument.get → 줄·길이·좌우 그림
     #| 호출  _score → 악보 SVG (낙하 레인과 같은 x)
-    #| 호출  instrument.hand_svg → 손 그림 (손끝 표시를 미리 다 만들어 둠)
+    #| 호출  instrument.hand_html → 손 그림 (손끝 표시를 미리 다 만들어 둠)
     #| 단계  음 정보를 JS 에 넘긴다 (자리·손가락·활·색·시각)
     #| 단계  화면 폭에 맞춰 통째로 줄이는 코드를 붙인다 (가로 폰 대응)
     #| 출력  HTML  (JS 가 매 프레임 다시 그림)
     ins = instrument.get(inst)
     x0 = max(70, staff.head_width(sig))
-    x1 = W - 22                      # 악보는 안내 패널까지 넘어 전체 폭을 씁니다
+    # 악보는 안내 패널 위까지 넘어 전체 폭을 씁니다.
+    # 다만 오른쪽 끝은 넉넉히 비웁니다 — 마지막 마디가 패널 모서리에 붙으면
+    # 실제로 겹치지 않아도 겹쳐 보입니다.
+    x1 = W - 40
     #| 호출  paginate → 4마디씩 끊은 장들
     pages = paginate(notes)
     # 간격은 **가장 긴 장** 기준으로 한 번만 정합니다.
@@ -184,10 +187,6 @@ def guide(notes, sig, bpm: int, inst: str = "violin", ready: int = 5) -> str:
     need = max([n["mm"] for n in notes] + [40.0])
     view_mm = min(ins["view_mm"], max(60.0, need * 1.22 + 10))
 
-    #| 호출  instrument.bridge_html → 「어느 줄을 켜나」 (지판 옆이 아니라 패널에)
-    bridge_svg = instrument.bridge_html(
-        ins, PANEL_W - 26, 58,
-        colors={s: STRING_COLOR[s] for s in ins["strings"]})
     # 내 악보는 줄을 넘나들 수 있습니다 — 쓰는 줄을 모두 밝게 합니다
     used = [s for s in ins["strings"] if any(n["string"] == s for n in notes)]
     active = notes[0]["string"]
@@ -235,10 +234,18 @@ def guide(notes, sig, bpm: int, inst: str = "violin", ready: int = 5) -> str:
  .pbody{{display:flex;gap:8px;align-items:center;flex:1}}
  .pinfo{{flex:1;min-width:0}}
  .pko{{font-size:27px;font-weight:700;color:{C['ink']};line-height:1.15}}
- .pfg{{font-size:12.5px;color:{C['ink2']};margin-bottom:8px}}
- .pbow{{display:inline-block;font-size:12px;font-weight:600;border-radius:6px;
-   padding:3px 8px;margin-bottom:7px}}
- .ppos{{font-size:11.5px;font-weight:600;margin-top:4px}}
+ /* 한 줄로 — 「개방현 · G현」이 두 줄로 깨지면 손 그림과 높이가 안 맞습니다 */
+ .pfg{{font-size:12px;color:{C['ink2']};margin-bottom:8px;white-space:nowrap}}
+ /* 한 줄로 유지 — 「⊓ 다운보우」가 두 줄로 깨지면 배지처럼 안 보입니다 */
+ .pbow{{display:inline-block;font-size:11.5px;font-weight:600;border-radius:6px;
+   padding:3px 7px;margin-bottom:7px;white-space:nowrap}}
+ .ppos{{font-size:11.5px;font-weight:600}}
+ /* 아래 한 줄 — 포지션과 켜는 줄.
+    브리지 그림은 뺐습니다: 지판에 이미 E·A·D·G 라벨이 있고
+    「A현」이 글자로도 있어 같은 말을 세 번 하고 있었습니다. */
+ .pfoot{{margin-top:2px}}
+ .pstr{{font-size:12.5px;color:{C['muted']};margin-top:1px}}
+ .pstr b{{color:{C['ink']};font-weight:700;font-size:14px}}
  /* 한 줄로 유지합니다 — 줄바꿈되면 버튼이 세로로 깨져 자리를 잃습니다 */
  #bar{{display:flex;gap:9px;align-items:center;height:{BAR_H}px;
    color:{C['ink2']};font-size:11.5px;white-space:nowrap;overflow:hidden}}
@@ -278,13 +285,15 @@ def guide(notes, sig, bpm: int, inst: str = "violin", ready: int = 5) -> str:
       <div class="pko" id="pko">—</div>
       <div class="pfg" id="pfg">&nbsp;</div>
       <div class="pbow" id="pbow">&nbsp;</div>
-      <div class="ppos" id="ppos">&nbsp;</div>
     </div>
-    <div style="flex:none">{instrument.hand_html(ins, 78)}</div>
+    <div style="flex:none">{instrument.hand_html(ins, 74)}</div>
    </div>
-   <div class="pt" style="margin:2px 0 3px">켜는 줄 <b id="pstr"
-     style="color:{C['ink']};font-weight:700">—</b></div>
-   {bridge_svg}
+   <!-- 「1포지션」 · 「켜는 줄 A현」 · 브리지 그림은 **같은 말**이었습니다.
+        셋을 한 행으로 합쳐 세로 공간을 벌었습니다. -->
+   <div class="pfoot">
+     <div class="ppos" id="ppos">&nbsp;</div>
+     <div class="pstr"><b id="pstr">—</b></div>
+   </div>
   </div>
  </div>
  <div id="bar">

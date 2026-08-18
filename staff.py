@@ -51,20 +51,34 @@ def head_width(sig, left=14) -> float:
     return w + GAP
 
 
+# 아래쪽은 **언제나 G현 개방현(G3)** 자리까지 비웁니다.
+#
+#  왜 고정하나: 아래 여백을 그 악보의 최저음에 맞춰 잡으면, A현 연습에서는
+#  계이름이 오선 바로 밑에 붙고 G현 연습에서는 한참 아래로 내려갑니다.
+#  그러면 ① 줄을 바꿀 때마다 악보 높이가 출렁이고
+#         ② G현처럼 덧줄이 많은 악보에서 음표머리와 계이름이 겹칩니다.
+#  G3 는 바이올린이 낼 수 있는 가장 낮은 음이라, 여기 맞춰 두면 어느 줄이든
+#  같은 자리에 같은 모양으로 그려집니다.
+FLOOR = -5                 # staff_pos("G", 3) — G현 개방현
+
+
 def layout(notes, with_badges=True):
     """이 악보를 그리는 데 위아래로 얼마나 필요한지 미리 잽니다.
 
-    G현처럼 낮은 음은 덧줄이 아래로 많이 내려가서
-    자리를 미리 잡아 두지 않으면 잘립니다.
+    아래는 **항상 G현 개방현 기준**입니다 (위 FLOOR 설명 참고).
+    위는 그 악보의 최고음에 맞춥니다 — 위쪽엔 활 기호와 슬러뿐이라
+    겹칠 것이 없고, 낮은 곡에서 위를 비워 두면 자리만 버립니다.
     판정 배지가 없는 화면(연습 가이드)은 위 여백이 덜 필요합니다.
     """
     #| 흐름  이 악보를 그리는 데 위아래로 얼마나 필요한지 미리 잰다
     #| 입력  음 목록 · 판정 배지를 다는지
-    #| 단계  가장 높은 음과 가장 낮은 음의 오선 위치를 찾는다
+    #| 단계  가장 높은 음의 오선 위치를 찾는다
+    #| 단계  아래는 실제 최저음이 아니라 **G현 개방현** 기준으로 잡는다
     #| 갈래  배지를 다나 ? 위를 더 비운다 : 활·슬러 자리만 비운다
     #| 출력  (위 여백, 아래 여백)
     ps = [staff_pos(n["letter"], n["octave"]) for n in notes]
-    hi, lo = max(ps), min(ps)
+    hi = max(ps)
+    lo = min(min(ps), FLOOR)          # ← 실제보다 낮게 잡아 자리를 미리 비웁니다
     top = (58 if with_badges else 40) + max(0, (hi - 8)) * (GAP / 2)
     bottom = 26 + max(0, (0 - lo)) * (GAP / 2) + 30
     return top, bottom
@@ -164,7 +178,12 @@ def line(notes, x0, step, top, right, *, sig=("♯", []), left=14,
                      f'stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>')
 
     # ── 음표 ──
-    name_y = top + GAP * 4 + max(0, -min(poss)) * (GAP / 2) + (12 if compact else 20)
+    # 계이름 줄도 **G현 개방현 기준**으로 고정합니다. 실제 최저음에 맞추면
+    # A현과 G현에서 자리가 달라져 줄을 바꿀 때 화면이 출렁입니다.
+    # 여유(23)는 음표머리 반지름(4.6)과 글자 높이를 더한 것보다 넉넉하게 —
+    # 12 로 두었더니 G현에서 음표머리와 계이름이 겹쳤고, 17 도 1px 모자랐습니다.
+    name_y = (top + GAP * 4 + max(0, -min(min(poss), FLOOR)) * (GAP / 2)
+              + (23 if compact else 30))
     for i, nt in enumerate(notes):
         x = note_x(i, x0, step)
         pos = poss[i]
