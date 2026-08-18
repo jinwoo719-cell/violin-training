@@ -110,6 +110,7 @@ S.setdefault("when", "")             # 그때의 시각
 S.setdefault("take", 0)              # 녹음 회차 — 위젯을 새로 만들 때 씁니다
 S.setdefault("practice", 0)          # 고른 음계
 S.setdefault("pos", music.POSITIONS[0])   # 포지션 (1 / 3 / 1→3)
+S.setdefault("dir", music.DIRECTIONS[0])  # 방향 (올라갔다 내려오기 / …)
 S.setdefault("slur", "한 음씩 (데타셰)")
 S.setdefault("bpm", 60)
 S.setdefault("tol_cent", 12)
@@ -170,6 +171,14 @@ with st.sidebar:
         help="1포지션·3포지션을 고르면 손을 옮기지 않습니다. "
              "그 자리에서 안 닿는 음은 옆 줄로 넘어가고, "
              "그래도 안 닿으면 음계가 짧아집니다.")
+    #| 입력  방향 — 음계는 올라갔다 내려오는 것이 기본입니다
+    #| 갈래  내 악보인가 ? 방향은 안 묻는다 (적은 순서대로 칩니다) : 고르게 한다
+    if not S.my:
+        S.dir = st.selectbox(
+            "방향", music.DIRECTIONS, index=music.DIRECTIONS.index(S.dir),
+            help="교본의 음계 연습은 올라갔다 내려옵니다. 내려올 때 음정이 "
+                 "무너지는 사람이 훨씬 많습니다. 한 옥타브가 16음 = 4마디가 "
+                 "되어 악보 한 장에 딱 찹니다.")
     S.slur = st.selectbox("활 나누기", list(music.SLURS.keys()),
                           index=list(music.SLURS).index(S.slur))
     S.bpm = st.slider("BPM", 40, 120, S.bpm, step=5)
@@ -186,7 +195,7 @@ with st.sidebar:
 #  그래서 **여기서 먼저 확인하고 사람 말로 알려 줍니다.**
 #| 갈래  필요한 함수가 다 있나 ? 계속한다 : 무엇이 옛 버전인지 알리고 멈춘다
 _NEED = {"screens": ["guide", "guide_component", "store", "paginate"],
-         "music":   ["POSITIONS", "build_notes"],
+         "music":   ["POSITIONS", "DIRECTIONS", "build_notes"],
          "sheet":   ["build", "list_models"]}
 _old = [f"{m}.py" for m, fns in _NEED.items()
         for f in fns if not hasattr(globals()[m], f)]
@@ -230,7 +239,7 @@ if S.my:
     base_title = S.my["name"]
 else:
     base_notes = music.build_notes(string_name, mode, slur=music.SLURS[S.slur],
-                                   bpm=S.bpm, position=S.pos)
+                                   bpm=S.bpm, position=S.pos, direction=S.dir)
     #| 호출  music.build_notes → 이 연습의 음 목록 (모든 화면이 이걸 씀)
     sig = music.key_signature(music.STRING_BY_NAME[string_name]["letter"], mode)
     #| 호출  music.key_signature → 조표
@@ -293,7 +302,7 @@ def make_drill(spec):
     if k == "longtone":
         return music.drill_longtone(string_name, mode, 30), "활 롱톤 · 한 활에 네 음", 30
     return (music.build_notes(string_name, mode, slur=music.SLURS[S.slur],
-                              bpm=slow, position=S.pos),
+                              bpm=slow, position=S.pos, direction=S.dir),
             f'{music.PRACTICES[S.practice][0]} · 느리게', slow)
 
 

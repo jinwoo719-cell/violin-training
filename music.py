@@ -98,6 +98,30 @@ FINGER_3RD = {5: 1, 6: 1, 7: 2, 8: 2, 9: 3, 10: 3, 11: 4, 12: 4}
 # 처음부터 1→3 을 섞어 주면 배우는 순서가 뒤집힙니다.
 POSITIONS = ["1포지션", "3포지션", "1 → 3포지션 (손 옮기기)"]
 
+# 음계는 **올라갔다 내려오는 것**이 기본입니다.
+# 교본의 음계 연습이 다 그렇습니다 — 올라갈 때와 내려올 때 손가락 감각이
+# 다르고, 내려올 때 음정이 무너지는 사람이 훨씬 많습니다.
+# 덤으로 한 옥타브(8음)가 **16음 = 정확히 4마디**가 되어 악보 한 장에 딱 찹니다.
+DIRECTIONS = ["올라갔다 내려오기", "올라가기만", "내려오기만"]
+
+
+def bend(pattern, direction):
+    """음계를 어느 방향으로 갈지.
+
+    꼭대기 음은 **두 번** 칩니다 (다운 → 업). 활을 돌리는 자리라
+    실제로도 그렇게 연습하고, 8+8=16 이라 마디도 딱 떨어집니다.
+    """
+    #| 흐름  올라가기만 / 내려오기만 / 올라갔다 내려오기
+    #| 갈래  올라가기만인가 ? 그대로 : 계속한다
+    #| 갈래  내려오기만인가 ? 뒤집는다 : 올라간 뒤 뒤집어 붙인다
+    #| 출력  반음 목록
+    p = list(pattern)
+    if direction == "올라가기만":
+        return p
+    if direction == "내려오기만":
+        return p[::-1]
+    return p + p[::-1]
+
 # 그 포지션에서 짚을 수 있는 범위 (개방현에서 몇 반음 위까지)
 REACH = {1: (0, 8), 3: (5, 12)}
 
@@ -260,7 +284,8 @@ def notes_from(string_name: str, pattern, mode: str, slur: int = 1, bpm: int = 6
 
 
 def build_notes(string_name: str, mode: str, slur: int = 1, bpm: int = 60,
-                position: str = "1 → 3포지션"):
+                position: str = "1포지션",
+                direction: str = "올라갔다 내려오기"):
     """음계 하나를 '연주할 수 있는 음 목록'으로 바꿉니다.
 
     음 하나에 들어가는 것:
@@ -269,8 +294,9 @@ def build_notes(string_name: str, mode: str, slur: int = 1, bpm: int = 60,
       bow/slur     활을 어느 쪽으로      t/dur            언제 몇 초
     """
     #| 흐름  음계 하나를 화면 세 개가 그대로 쓸 수 있는 음 목록으로 만든다
-    #| 입력  줄 · 음계 · 슬러 · BPM · 포지션
+    #| 입력  줄 · 음계 · 슬러 · BPM · 포지션 · 방향
     #| 호출  playable → 그 포지션에서 닿는 음만
+    #| 호출  bend → 올라갔다 내려오기 등 방향
     #| 호출  key_signature → 조표
     #| 호출  assign_positions → 음마다 (포지션, 손가락)
     #| 반복  음계의 음마다
@@ -284,9 +310,10 @@ def build_notes(string_name: str, mode: str, slur: int = 1, bpm: int = 60,
     force = {"1포지션": 1, "3포지션": 3}.get(position)
     #| 갈래  포지션을 못박았나 ? 한 옥타브 그대로 두고 줄을 넘나든다 : 한 줄에서 손을 옮긴다
     if force:
-        return _build(string_name, playable(SCALES[mode], string_name, force),
+        return _build(string_name,
+                      bend(playable(SCALES[mode], string_name, force), direction),
                       mode, slur, bpm, force=force, cross=True)
-    return _build(string_name, list(SCALES[mode]), mode, slur, bpm)
+    return _build(string_name, bend(SCALES[mode], direction), mode, slur, bpm)
 
 
 def _build(string_name, pattern, mode, slur, bpm, place=None, force=None,
